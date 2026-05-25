@@ -3,74 +3,116 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { supabase } from '../../lib/supabase'
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('')
-  const [otp, setOtp] = useState('')
+  const [identifier, setIdentifier] = useState('') // Handles both email and username
+  const [password, setPassword] = useState('')
+  const [username, setUsername] = useState('') // Only used for signing up
   const [loading, setLoading] = useState(false)
-  const [sent, setSent] = useState(false)
+  const [isSignUp, setIsSignUp] = useState(false)
 
-  async function handleSendOtp() {
+  async function handleAuth() {
+    if (!identifier || !password) {
+      Alert.alert('Error', 'Please fill in all fields')
+      return
+    }
+
+    if (isSignUp && !username) {
+      Alert.alert('Error', 'Please choose a username')
+      return
+    }
+
     setLoading(true)
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: true,
-        data: {},
+
+    if (isSignUp) {
+      // 🟢 SIGN UP FLOW
+      const { error } = await supabase.auth.signUp({
+        email: identifier,
+        password,
+        options: {
+          data: { username: username }
+        }
+      })
+      if (error) Alert.alert('Sign Up Error', error.message)
+      else Alert.alert('Success', 'Account created! You can now log in.')
+    } else {
+      // 🔵 LOG IN FLOW
+      let loginEmail = identifier
+
+      // If there is no '@', assume it is a username and look up the email
+      if (!identifier.includes('@')) {
+        const { data, error } = await supabase.rpc('get_email_by_username', { 
+          p_username: identifier 
+        })
+        
+        if (error || !data) {
+          Alert.alert('Login Error', 'Username not found.')
+          setLoading(false)
+          return
+        }
+        // Set the fetched email for the actual login attempt
+        loginEmail = data 
       }
-    })
-    if (error) Alert.alert('Error', error.message)
-    else setSent(true)
+
+      // Log in using the email (either provided by the user or fetched from the DB)
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password,
+      })
+      if (error) Alert.alert('Login Error', 'Incorrect credentials.')
+    }
+
     setLoading(false)
   }
-
-  async function handleVerifyOtp() {
-    setLoading(true)
-    const { error } = await supabase.auth.verifyOtp({
-      email,
-      token: otp,
-      type: 'email'
-    })
-    if (error) Alert.alert('Invalid code', 'Please check the code and try again.')
-    setLoading(false)
-  }
-
-  if (sent) return (
-    <View style={styles.container}>
-      <Text style={styles.title}>DnD</Text>
-      <Text style={styles.sub}>Enter the 6-digit code{'\n'}sent to {email}</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="000000"
-        placeholderTextColor="#555"
-        value={otp}
-        onChangeText={setOtp}
-        keyboardType="number-pad"
-        maxLength={6}
-        autoFocus
-      />
-      <TouchableOpacity style={styles.button} onPress={handleVerifyOtp} disabled={loading}>
-        <Text style={styles.buttonText}>{loading ? 'Verifying...' : 'Verify code'}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.resend} onPress={() => setSent(false)}>
-        <Text style={styles.resendText}>Use a different email</Text>
-      </TouchableOpacity>
-    </View>
-  )
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>DnD</Text>
-      <Text style={styles.sub}>Enter your email to get a login code</Text>
+      <Text style={styles.sub}>
+        {isSignUp ? 'Create a new account' : 'Sign in to your account'}
+      </Text>
+      
+      {/* Show Username field ONLY during Sign Up */}
+      {isSignUp && (
+        <TextInput
+          style={styles.input}
+          placeholder="Choose a Username"
+          placeholderTextColor="#555"
+          value={username}
+          onChangeText={setUsername}
+          autoCapitalize="none"
+        />
+      )}
+
+      {/* Main input: Changes placeholder based on mode */}
       <TextInput
         style={styles.input}
-        placeholder="your@email.com"
+        placeholder={isSignUp ? "Email address" : "Email or Username"}
         placeholderTextColor="#555"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
+        value={identifier}
+        onChangeText={setIdentifier}
+        keyboardType={isSignUp ? "email-address" : "default"}
         autoCapitalize="none"
       />
-      <TouchableOpacity style={styles.button} onPress={handleSendOtp} disabled={loading}>
-        <Text style={styles.buttonText}>{loading ? 'Sending...' : 'Send code'}</Text>
+      
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        placeholderTextColor="#555"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+        autoCapitalize="none"
+      />
+
+      <TouchableOpacity style={styles.button} onPress={handleAuth} disabled={loading}>
+        <Text style={styles.buttonText}>
+          {loading ? 'Processing...' : (isSignUp ? 'Sign Up' : 'Log In')}
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.toggle} onPress={() => setIsSignUp(!isSignUp)}>
+        <Text style={styles.toggleText}>
+          {isSignUp ? 'Already have an account? Log in' : "Don't have an account? Sign up"}
+        </Text>
       </TouchableOpacity>
     </View>
   )
@@ -80,9 +122,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', padding: 32, backgroundColor: '#0f0f0f' },
   title: { fontSize: 32, fontWeight: '700', color: '#fff', marginBottom: 12, textAlign: 'center' },
   sub: { color: '#888', textAlign: 'center', marginBottom: 32, lineHeight: 22 },
-  input: { backgroundColor: '#1a1a1a', color: '#fff', borderRadius: 12, padding: 16, marginBottom: 16, fontSize: 16, borderWidth: 1, borderColor: '#333', textAlign: 'center' },
-  button: { backgroundColor: '#e8a020', borderRadius: 12, padding: 16, alignItems: 'center' },
+  input: { backgroundColor: '#1a1a1a', color: '#fff', borderRadius: 12, padding: 16, marginBottom: 16, fontSize: 16, borderWidth: 1, borderColor: '#333' },
+  button: { backgroundColor: '#e8a020', borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 8 },
   buttonText: { color: '#000', fontWeight: '700', fontSize: 16 },
-  resend: { marginTop: 20, alignItems: 'center' },
-  resendText: { color: '#555', fontSize: 14 },
+  toggle: { marginTop: 24, alignItems: 'center' },
+  toggleText: { color: '#888', fontSize: 14 },
 })

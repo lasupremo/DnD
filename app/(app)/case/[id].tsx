@@ -9,11 +9,13 @@ import { Collection, DropResult, Video } from '../../../types'
 type Phase = 'idle' | 'rolling' | 'reveal'
 
 const RARITY_COLORS = ['#6496C8', '#8847FF', '#D32CE6', '#EB4B4B', '#E4AE39']
-const TILE_COUNT = 40
-const TILE_WIDTH = 72
-const TILE_GAP = 8
+const TILE_COUNT = 70 
+const TILE_WIDTH = 80
+const TILE_GAP = 12
 const TILE_STEP = TILE_WIDTH + TILE_GAP
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
+
+const stripInitialOffset = (SCREEN_WIDTH / 2) - (TILE_WIDTH / 2) - (TILE_STEP * 4)
 const CIRCLE_SIZE = SCREEN_WIDTH * 0.72
 
 export default function CaseScreen() {
@@ -26,6 +28,10 @@ export default function CaseScreen() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [userId, setUserId] = useState<string>('')
   const [tilesReady, setTilesReady] = useState(false)
+  
+  // 🟢 ADDED: The missing state variable!
+  const [paddedTiles, setPaddedTiles] = useState<Video[]>([])
+  
   const [videoVisible, setVideoVisible] = useState(false)
   const [isPlaying, setIsPlaying] = useState(true)
   const [progress, setProgress] = useState(0)
@@ -37,6 +43,30 @@ export default function CaseScreen() {
   const videoScale = useRef(new Animated.Value(0.8)).current
   const videoOpacity = useRef(new Animated.Value(0)).current
   const progressInterval = useRef<ReturnType<typeof setInterval> | null>(null)
+  const spinAnim = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    let animation: Animated.CompositeAnimation;
+    
+    if (phase === 'idle') {
+      spinAnim.setValue(0);
+      animation = Animated.loop(
+        Animated.timing(spinAnim, {
+          toValue: 1,
+          duration: 4000, 
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      );
+      animation.start();
+    } else {
+      spinAnim.stopAnimation();
+    }
+    
+    return () => {
+      if (animation) animation.stop();
+    };
+  }, [phase]);
 
   const player = useVideoPlayer(result?.cdn_url ?? '', (p) => { p.loop = true })
 
@@ -73,20 +103,33 @@ export default function CaseScreen() {
   async function fetchDecoys() {
     const { data } = await supabase
       .from('videos')
-      .select('id, title, thumbnail_url, rarity_tiers(name, color_hex)')
-      .eq('collection_id', id).eq('is_active', true).limit(30)
-    if (data) { setDecoys(data as unknown as Video[]); setTilesReady(true) }
+      .select('id, title, thumbnail_url, rarity_tiers(name, color_hex, sort_order)')
+      .eq('collection_id', id)
+      .eq('is_active', true)
+      .limit(30)
+      
+    if (data) { 
+      const fetchedVideos = data as unknown as Video[];
+
+      const sortedVideos = fetchedVideos.sort((a, b) => {
+        const orderA = a.rarity_tiers?.sort_order ?? 999; 
+        const orderB = b.rarity_tiers?.sort_order ?? 999;
+        
+        return orderA - orderB;
+      });
+
+      setDecoys(sortedVideos);
+
+      const filledStrip = Array.from({ length: TILE_COUNT }).map((_, index) => {
+        return sortedVideos[index % sortedVideos.length];
+      });
+
+      setPaddedTiles(filledStrip);
+      setTilesReady(true);
+    }
   }
 
-  const paddedTiles = tilesReady
-    ? [...Array(TILE_COUNT)].map((_, i) => {
-        if (decoys.length > 0) return decoys[i % decoys.length]
-        return {
-          id: i.toString(), title: '', cdn_url: '', thumbnail_url: '',
-          rarity_tiers: { id: '', name: '', weight_percent: 0, sort_order: 0, color_hex: RARITY_COLORS[i % RARITY_COLORS.length] }
-        } as Video
-      })
-    : []
+  // 🔴 DELETED: The old `const paddedTiles = ...` block that was breaking TypeScript used to be right here!
 
   async function handleOpen() {
     if (phase !== 'idle' || !userId) return
@@ -94,40 +137,55 @@ export default function CaseScreen() {
     scrollX.setValue(0)
     revealAnim.setValue(0)
 
-    // Fade out the case icon
     Animated.timing(caseOpacity, {
       toValue: 0.25,
       duration: 300,
       useNativeDriver: true,
     }).start()
 
-    const rollPromise = openCase(id, userId)
-    const randomOffset = Math.random() * TILE_STEP
-    const finalScroll = (TILE_COUNT - 5) * TILE_STEP + randomOffset
+    try {
+      const drop = await openCase(id, userId)
 
-    Animated.timing(scrollX, {
-      toValue: -finalScroll,
-      duration: 3500,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start(async () => {
-      try {
-        const drop = await rollPromise
+      const minTiles = 45;
+      const maxTiles = 60;
+      const tilesToScroll = Math.floor(Math.random() * (maxTiles - minTiles + 1)) + minTiles;
+
+      const finalStrip = Array.from({ length: TILE_COUNT }).map((_, index) => {
+        if (index === tilesToScroll) {
+          return drop; 
+        }
+        return decoys[index % decoys.length]; 
+      });
+      setPaddedTiles(finalStrip as Video[]); 
+
+      const minDuration = 4500;
+      const maxDuration = 7000;
+      const rollDuration = Math.floor(Math.random() * (maxDuration - minDuration + 1)) + minDuration;
+
+      const randomOffset = (Math.random() * (TILE_WIDTH - 10)) + 5; 
+      const finalScroll = (tilesToScroll * TILE_STEP) + randomOffset;
+
+      Animated.timing(scrollX, {
+        toValue: -finalScroll,
+        duration: rollDuration,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
         setResult(drop)
         setPhase('reveal')
 
-        // Fade case back in, reveal card slides up
         Animated.parallel([
           Animated.timing(caseOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
           Animated.spring(revealAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }),
         ]).start()
-      } catch {
-        Alert.alert('Error', 'Something went wrong. Try again.')
-        setPhase('idle')
-        scrollX.setValue(0)
-        Animated.timing(caseOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start()
-      }
-    })
+      })
+
+    } catch {
+      Alert.alert('Error', 'Something went wrong. Try again.')
+      setPhase('idle')
+      scrollX.setValue(0)
+      Animated.timing(caseOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start()
+    }
   }
 
   function handlePlay() {
@@ -170,6 +228,11 @@ export default function CaseScreen() {
   const revealTranslateY = revealAnim.interpolate({ inputRange: [0, 1], outputRange: [80, 0] })
   const revealOpacity = revealAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] })
 
+  const spin = spinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg']
+  });
+
   // Strip center offset so middle tile aligns with indicator
   const stripInitialOffset = -(TILE_STEP * (TILE_COUNT / 2)) + SCREEN_WIDTH / 2 - TILE_WIDTH / 2
 
@@ -186,43 +249,74 @@ export default function CaseScreen() {
         Open <Text style={styles.subLabelBold}>{collection?.name}</Text> videos
       </Text>
 
-      {/* Circle case button */}
-      <View style={styles.circleWrapper}>
-        {/* Rolling strip inside circle */}
-        <View style={styles.stripClip}>
-          <Animated.View style={[styles.strip, { transform: [{ translateX: Animated.add(new Animated.Value(stripInitialOffset), scrollX) }] }]}>
-            {paddedTiles.map((v, i) => (
-              <View key={i} style={[styles.tile, { backgroundColor: v.rarity_tiers?.color_hex ?? '#333' }]} />
-            ))}
+      {/* Dynamic Layout based on Phase */}
+      {phase === 'idle' ? (
+        <>
+          {/* IDLE: Large Rotating Smiley */}
+          <Animated.View style={[styles.caseIconWrapper, { transform: [{ rotate: spin }] }]}>
+            <TouchableOpacity onPress={handleOpen} activeOpacity={0.85}>
+              <Image source={require('../../../assets/smiley.png')} style={styles.caseIcon} resizeMode="contain" />
+            </TouchableOpacity>
           </Animated.View>
-          {/* Fade edges */}
-          <View style={styles.fadeLeft} pointerEvents="none" />
-          <View style={styles.fadeRight} pointerEvents="none" />
-          {/* Center indicator */}
-          <View style={styles.indicator} pointerEvents="none" />
-        </View>
 
-        {/* Case icon button */}
-        <Animated.View style={[styles.caseIconWrapper, { opacity: caseOpacity }]}>
-          <TouchableOpacity onPress={handleOpen} disabled={phase !== 'idle'} activeOpacity={0.85}>
-            <Image
-              source={{ uri: collection?.cover_image_url }}
-              style={styles.caseIcon}
-              resizeMode="cover"
-            />
-          </TouchableOpacity>
-        </Animated.View>
-      </View>
-
-      {/* Video grid preview */}
-      <View style={styles.videoGrid}>
-        {decoys.slice(0, 8).map((v, i) => (
-          <View key={i} style={styles.gridThumbWrapper}>
-            <View style={[styles.gridThumb, { backgroundColor: v.rarity_tiers?.color_hex ?? '#333' }]} />
-            <Text style={styles.gridThumbLabel} numberOfLines={1}>{v.title}</Text>
+          {/* IDLE: Exact Figma Video Grid */}
+          <View style={styles.videoGrid}>
+            {decoys.slice(0, 8).map((v, i) => (
+              <View key={i} style={styles.gridThumbWrapper}>
+                {/* Replaced the placeholder View with an Image component */}
+                <Image 
+                  source={{ uri: v.thumbnail_url }} 
+                  style={styles.gridThumb} 
+                  resizeMode="cover" 
+                />
+                <View style={[styles.gridRarityBar, { backgroundColor: v.rarity_tiers?.color_hex ?? '#6496C8' }]} />
+                <Text style={styles.gridThumbLabel} numberOfLines={1}>{v.title}</Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
+        </>
+      ) : (
+        <>
+          {/* ROLLING/REVEAL: CS:GO Style Horizontal Strip */}
+          <View style={styles.caseContainer}>
+            <View style={styles.stripClip}>
+              <Animated.View 
+                collapsable={false} 
+                style={[
+                  styles.strip, 
+                  { 
+                    // 🟢 THE FIX 1: Force the engine to allocate space for all 70 tiles (~6400 pixels)
+                    width: TILE_COUNT * TILE_STEP, 
+                    transform: [{ translateX: Animated.add(new Animated.Value(stripInitialOffset), scrollX) }] 
+                  }
+                ]}
+              >
+                {paddedTiles.map((v, i) => (
+                  <View 
+                    key={i} 
+                    style={[
+                      styles.tile, 
+                      { 
+                        backgroundColor: v?.rarity_tiers?.color_hex ?? '#333',
+                        // 🟢 THE FIX 2: Stop React Native from trying to squish the tiles to fit the screen
+                        flexShrink: 0 
+                      }
+                    ]} 
+                  />
+                ))}
+              </Animated.View>
+            </View>
+
+            {/* Dark gradient fades on edges */}
+            <View style={styles.fadeLeft} pointerEvents="none" />
+            <View style={styles.fadeRight} pointerEvents="none" />
+
+            {/* Top and Bottom Indicator Triangles */}
+            <View style={styles.indicatorTop} pointerEvents="none" />
+            <View style={styles.indicatorBottom} pointerEvents="none" />
+          </View>
+        </>
+      )}
 
       {/* Reveal card */}
       {phase === 'reveal' && result && (
@@ -288,31 +382,100 @@ export default function CaseScreen() {
 
 const CIRCLE_BORDER = 3
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f0f0f', paddingTop: 56 },
+  container: { flex: 1, backgroundColor: '#0F0F0F', paddingTop: 56 },
   backBtn: { paddingHorizontal: 20, marginBottom: 16 },
   backText: { color: '#888', fontSize: 14 },
   pressLabel: { fontSize: 22, fontWeight: '700', color: '#fff', textAlign: 'center' },
   subLabel: { fontSize: 13, color: '#555', textAlign: 'center', marginTop: 4, marginBottom: 28 },
   subLabelBold: { color: '#fff', fontWeight: '600' },
 
-  // Circle
-  circleWrapper: { alignSelf: 'center', width: CIRCLE_SIZE, height: CIRCLE_SIZE, borderRadius: CIRCLE_SIZE / 2, borderWidth: CIRCLE_BORDER, borderColor: '#e8a020', overflow: 'hidden', justifyContent: 'center', alignItems: 'center', marginBottom: 28 },
-  stripClip: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', overflow: 'hidden' },
-  strip: { flexDirection: 'row', alignItems: 'center', position: 'absolute' },
-  tile: { width: TILE_WIDTH, height: TILE_WIDTH, borderRadius: 8, marginHorizontal: TILE_GAP / 2 },
-  fadeLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: CIRCLE_SIZE * 0.28, backgroundColor: 'transparent',
-    // gradient-like fade using shadow
+  // --- Smiley / Case Icon ---
+  caseIconWrapper: { 
+    alignSelf: 'center',
+    width: 231, // Exact size from your SVG
+    height: 231, 
+    marginVertical: 40,
+    zIndex: 20, 
   },
-  fadeRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: CIRCLE_SIZE * 0.28 },
-  indicator: { position: 'absolute', top: '30%', bottom: '30%', left: '50%', width: 2, backgroundColor: '#e8a020', marginLeft: -1 },
-  caseIconWrapper: { position: 'absolute', width: CIRCLE_SIZE * 0.62, height: CIRCLE_SIZE * 0.62, borderRadius: (CIRCLE_SIZE * 0.62) / 2, overflow: 'hidden' },
   caseIcon: { width: '100%', height: '100%' },
 
+  // CS:GO Case Container
+  caseContainer: { 
+    width: '100%', 
+    height: 140, 
+    backgroundColor: '#141414', 
+    borderTopWidth: 2,
+    borderBottomWidth: 2,
+    borderColor: '#2a2a2a',
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginVertical: 40,
+    overflow: 'hidden'
+  },
+  stripClip: { width: '100%', height: TILE_WIDTH, justifyContent: 'center' },
+  strip: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    position: 'absolute',
+    width: TILE_COUNT * TILE_STEP // This forces RN to render the whole strip!
+  },
+  tile: { width: TILE_WIDTH, height: TILE_WIDTH, borderRadius: 6, marginHorizontal: TILE_GAP / 2 },
+  fadeLeft: { 
+    position: 'absolute', left: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' 
+  },
+  fadeRight: { 
+    position: 'absolute', right: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' 
+  },
+  indicatorTop: { 
+    position: 'absolute', 
+    top: 0, 
+    left: '50%', 
+    marginLeft: -12, // Centers the 24px wide triangle
+    width: 0, 
+    height: 0, 
+    borderLeftWidth: 12, 
+    borderRightWidth: 12, 
+    borderTopWidth: 16, 
+    borderLeftColor: 'transparent', 
+    borderRightColor: 'transparent', 
+    borderTopColor: '#e8a020', // Yellow tip pointing down
+    zIndex: 10 
+  },
+  indicatorBottom: { 
+    position: 'absolute', 
+    bottom: 0, 
+    left: '50%', 
+    marginLeft: -12, 
+    width: 0, 
+    height: 0, 
+    borderLeftWidth: 12, 
+    borderRightWidth: 12, 
+    borderBottomWidth: 16, 
+    borderLeftColor: 'transparent', 
+    borderRightColor: 'transparent', 
+    borderBottomColor: '#e8a020', // Yellow tip pointing up
+    zIndex: 10 
+  },
+
   // Video grid
-  videoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 8, marginBottom: 12 },
-  gridThumbWrapper: { width: (SCREEN_WIDTH - 56) / 4, alignItems: 'center' },
-  gridThumb: { width: '100%', aspectRatio: 1, borderRadius: 6 },
-  gridThumbLabel: { color: '#888', fontSize: 9, marginTop: 3, textAlign: 'center' },
+  videoGrid: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', 
+    paddingHorizontal: 32, // Based on x="32" from SVG
+    gap: 29, // Based on the 121 - 32 - 60 math from SVG
+    justifyContent: 'center',
+    marginTop: 20,
+  },
+  // Removed 'alignItems: center' so the text left-alignment works properly
+  gridThumbWrapper: { width: 60 }, 
+  
+  // Added a dark background fallback while the image loads
+  gridThumb: { width: 60, height: 70, borderRadius: 4, backgroundColor: '#1a1a1a' }, 
+  
+  gridRarityBar: { width: 60, height: 4, marginTop: -4, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
+  
+  // Updated text to white, bold, and left-aligned
+  gridThumbLabel: { color: '#fff', fontSize: 9, marginTop: 6, textAlign: 'left', fontWeight: 'bold' },
 
   // Reveal card
   revealCard: { position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: '#1a1a1a', borderRadius: 16, borderWidth: 1.5, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },

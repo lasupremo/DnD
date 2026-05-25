@@ -4,49 +4,62 @@ import { Image } from 'react-native'
 
 export default function AppLayout() {
   return (
-    <Tabs screenOptions={{
-      headerShown: false,
-      tabBarStyle: styles.tabBar,
-      tabBarActiveTintColor: '#e8a020',
-      tabBarInactiveTintColor: '#555',
-      tabBarShowLabel: true,
-      tabBarLabelStyle: styles.label,
-    }}>
-      <Tabs.Screen
-        name="collections"
-        options={{
-          title: 'Cases',
-          tabBarIcon: ({ color }) => (
-            <View style={[styles.iconWrapper, { borderBottomColor: color }]}>
-              <View style={[styles.triangle, { borderBottomColor: color }]} />
-            </View>
-          ),
-        }}
+    <Tabs 
+      screenOptions={{
+        headerShown: false, // Hides the top header if you are doing custom headers
+        tabBarActiveTintColor: '#e8a020', // Your active yellow color
+        tabBarInactiveTintColor: '#888',
+        tabBarStyle: { 
+          backgroundColor: '#0F0F0F', 
+          borderTopColor: '#2a2a2a',
+        },
+      }}
+    >
+      {/* 1. Cases (Mapped to collections.tsx) */}
+      <Tabs.Screen 
+        name="collections" 
+        options={{ 
+          title: 'Cases', 
+          tabBarLabel: 'Cases',
+          // tabBarIcon: ({ color }) => <YourIcon name="box" color={color} />
+        }} 
       />
-      <Tabs.Screen
-        name="inventory"
-        options={{
-          title: 'Inventory',
-          tabBarIcon: ({ color }) => (
-            <View style={[styles.iconWrapper]}>
-              <View style={[styles.triangle, { borderBottomColor: color }]} />
-            </View>
-          ),
-        }}
+
+      {/* 2. Inventory */}
+      <Tabs.Screen 
+        name="inventory" 
+        options={{ 
+          title: 'Inventory', 
+          tabBarLabel: 'Inventory',
+        }} 
       />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Settings',
-          tabBarIcon: ({ color }) => (
-            <View style={[styles.iconWrapper]}>
-              <View style={[styles.triangle, { borderBottomColor: color }]} />
-            </View>
-          ),
-        }}
+
+      {/* 3. Settings */}
+      <Tabs.Screen 
+        name="settings" 
+        options={{ 
+          title: 'Settings', 
+          tabBarLabel: 'Settings',
+        }} 
+      />
+    {/* 🔴 HIDDEN SCREENS (Still navigable, but no tab icon) */}
+      
+      <Tabs.Screen 
+        name="case/[id]" 
+        options={{ href: null }} // This completely hides it from the bottom bar
+      />
+      
+      <Tabs.Screen 
+        name="history" 
+        options={{ href: null }} // Hides the history page from the bar
+      />
+      
+      <Tabs.Screen 
+        name="index" 
+        options={{ href: null }} // Hides the default index route
       />
     </Tabs>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
