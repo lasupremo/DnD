@@ -39,7 +39,16 @@ export default function CaseScreen() {
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
   
-  const tickPlayer = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
+  const tick1 = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
+  const tick2 = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
+  const tick3 = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
+  
+  const tickPool = [tick1, tick2, tick3]
+  const tickIndex = useRef(0)
+  
+  const lastTickTime = useRef(0)
+  const lastHapticTime = useRef(0) // 🟢 NEW: Dedicated limiter for vibrations
+  
   const revealPlayer = useAudioPlayer(require('../../../assets/CS - Case result.mp3'))
   const openingPlayer = useAudioPlayer(require('../../../assets/CS - Case opening.mp3'))
   
@@ -47,6 +56,7 @@ export default function CaseScreen() {
 
   const scrollX = useRef(new Animated.Value(0)).current
   const caseOpacity = useRef(new Animated.Value(1)).current
+  const caseScale = useRef(new Animated.Value(1)).current // 🟢 NEW: Controls the pop animation
   const revealAnim = useRef(new Animated.Value(0)).current
   const videoScale = useRef(new Animated.Value(0.8)).current
   const videoOpacity = useRef(new Animated.Value(0)).current
@@ -100,25 +110,40 @@ export default function CaseScreen() {
     return () => { if (progressInterval.current) clearInterval(progressInterval.current) }
   }, [videoVisible])
   
-  // 🟢 Listen to the physical scroll distance to play the tick and vibrate
-  // 🟢 Listen to the physical scroll distance to play the tick and vibrate
+// 🟢 Listen to the physical scroll distance to play the tick and vibrate
   useEffect(() => {
     const listener = scrollX.addListener(({ value }) => {
-      const currentTile = Math.floor(Math.abs(value) / TILE_STEP)
+      // 🟢 THE FIX 1: Add half a tile step to the math! 
+      // This forces the tick to fire the exact pixel the LEFT EDGE touches the indicator, 
+      // guaranteeing the final winning tile will always click!
+      const currentTile = Math.floor((Math.abs(value) + (TILE_STEP / 2)) / TILE_STEP)
 
-      // Removed the delay check! Now it ticks instantly when crossing a tile.
       if (currentTile > lastTickTile.current) {
         lastTickTile.current = currentTile
-        
-        tickPlayer.seekTo(0)
-        tickPlayer.play()
-        
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+        const now = Date.now()
+
+        if (now - lastTickTime.current > 60) {
+          lastTickTime.current = now
+
+          // 🟢 THE FIX 2: Build the pool inside the listener to prevent stale React closures!
+          const activePool = [tick1, tick2, tick3]
+          const player = activePool[tickIndex.current]
+          
+          player.seekTo(0)
+          player.play()
+
+          tickIndex.current = (tickIndex.current + 1) % activePool.length
+        }
+
+        if (now - lastHapticTime.current > 100) {
+          lastHapticTime.current = now
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+        }
       }
     })
 
     return () => scrollX.removeListener(listener)
-  }, [scrollX, tickPlayer])
+  }, [scrollX, tick1, tick2, tick3])
 
   async function fetchCollection() {
     const { data } = await supabase
@@ -157,18 +182,25 @@ export default function CaseScreen() {
     }
   }
 
-  // 🔴 DELETED: The old `const paddedTiles = ...` block that was breaking TypeScript used to be right here!
-
   async function handleOpen() {
     if (phase !== 'idle' || !userId) return
 
-    // 🟢 AUDIO SEQUENCE 1: Play opening sound
-    openingPlayer.seekTo(0)
-    openingPlayer.play()
-    
+    tickIndex.current = 0 
     lastTickTile.current = 0
 
-    // A true Fisher-Yates Shuffle!
+    // 1. Play opening sound immediately
+    openingPlayer.seekTo(0)
+    openingPlayer.play()
+
+    // 2. The "Pop and Vanish" Animation!
+    Animated.parallel([
+      Animated.timing(caseOpacity, { toValue: 0, duration: 500, useNativeDriver: true }),
+      Animated.sequence([
+        Animated.timing(caseScale, { toValue: 1.15, duration: 150, useNativeDriver: true }),
+        Animated.timing(caseScale, { toValue: 0, duration: 350, easing: Easing.in(Easing.back(2)), useNativeDriver: true })
+      ])
+    ]).start()
+
     const shuffledDecoys = [...decoys];
     for (let i = shuffledDecoys.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -178,20 +210,17 @@ export default function CaseScreen() {
     const initialStrip = Array.from({ length: TILE_COUNT }).map((_, index) => {
       return shuffledDecoys[index % shuffledDecoys.length];
     });
-    
-    setPaddedTiles(initialStrip);
-    setPhase('rolling')
-    scrollX.setValue(0)
-    revealAnim.setValue(0)
-
-    Animated.timing(caseOpacity, {
-      toValue: 0.25,
-      duration: 300,
-      useNativeDriver: true,
-    }).start()
 
     try {
-      const drop = await openCase(id, userId)
+      const dropPromise = openCase(id, userId)
+      const delayPromise = new Promise(resolve => setTimeout(resolve, 1640))
+
+      const [drop] = await Promise.all([dropPromise, delayPromise])
+
+      setPaddedTiles(initialStrip);
+      setPhase('rolling')
+      scrollX.setValue(0)
+      revealAnim.setValue(0)
 
       const minTiles = 45;
       const maxTiles = 60;
@@ -206,38 +235,41 @@ export default function CaseScreen() {
       
       setPaddedTiles(finalStrip);
 
-      const minDuration = 4500;
-      const maxDuration = 7000;
-      const rollDuration = Math.floor(Math.random() * (maxDuration - minDuration + 1)) + minDuration;
+      const rollDuration = 7000;
 
       const randomOffset = (Math.random() * 60) - 30; 
       const finalScroll = (tilesToScroll * TILE_STEP) + randomOffset;
 
-      Animated.timing(scrollX, {
-        toValue: -finalScroll,
-        duration: rollDuration,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start(() => {
-        
-        // 🟢 AUDIO SEQUENCE 3: Play the 5-second reveal sound!
-        revealPlayer.seekTo(0)
-        revealPlayer.play()
+      // 🟢 3. THE FIX: The 150ms Buffer!
+      // This gives the phone enough time to actually draw the 70 heavy image tiles on the screen 
+      // BEFORE the animation starts. It will now start smoothly from Tile 4 and you will hear every tick!
+      setTimeout(() => {
+        Animated.timing(scrollX, {
+          toValue: -finalScroll,
+          duration: rollDuration,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start(() => {
+          
+          revealPlayer.seekTo(0)
+          revealPlayer.play()
 
-        setResult(drop)
-        setPhase('reveal')
+          setResult(drop)
+          setPhase('reveal')
 
-        Animated.parallel([
-          Animated.timing(caseOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
-          Animated.spring(revealAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }),
-        ]).start()
-      })
+          Animated.parallel([
+            Animated.timing(caseOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+            Animated.spring(revealAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }),
+          ]).start()
+        })
+      }, 150)
 
     } catch {
       Alert.alert('Error', 'Something went wrong. Try again.')
       setPhase('idle')
       scrollX.setValue(0)
       Animated.timing(caseOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start()
+      Animated.spring(caseScale, { toValue: 1, useNativeDriver: true }).start() // Reset scale on error
     }
   }
 
@@ -268,6 +300,7 @@ export default function CaseScreen() {
     setResult(null)
     scrollX.setValue(0)
     caseOpacity.setValue(1)
+    caseScale.setValue(1) // 🟢 Reset the icon scale back to normal!
     revealAnim.setValue(0)
   }
 
@@ -305,7 +338,18 @@ export default function CaseScreen() {
           {/* IDLE: Large Rotating Smiley */}
           <Animated.View style={[styles.caseIconWrapper, { transform: [{ rotate: spin }] }]}>
             <TouchableOpacity onPress={handleOpen} activeOpacity={0.85}>
-              <Image source={require('../../../assets/smiley.png')} style={styles.caseIcon} resizeMode="contain" />
+              {/* 🟢 THE FIX: Made this an Animated.Image and attached the opacity and scale! */}
+              <Animated.Image 
+                source={require('../../../assets/smiley.png')} 
+                style={[
+                  styles.caseIcon, 
+                  { 
+                    opacity: caseOpacity, 
+                    transform: [{ scale: caseScale }] 
+                  }
+                ]} 
+                resizeMode="contain" 
+              />
             </TouchableOpacity>
           </Animated.View>
 
