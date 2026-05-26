@@ -5,6 +5,8 @@ import { VideoView, useVideoPlayer } from 'expo-video'
 import { supabase } from '../../../lib/supabase'
 import { openCase } from '../../../lib/roll'
 import { Collection, DropResult, Video } from '../../../types'
+import { useAudioPlayer } from 'expo-audio'
+import * as Haptics from 'expo-haptics'
 
 type Phase = 'idle' | 'rolling' | 'reveal'
 
@@ -15,7 +17,7 @@ const TILE_GAP = 12
 const TILE_STEP = TILE_WIDTH + TILE_GAP
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
 
-const stripInitialOffset = (SCREEN_WIDTH / 2) - (TILE_WIDTH / 2) - (TILE_STEP * 4)
+const stripInitialOffset = (SCREEN_WIDTH / 2) - (TILE_WIDTH / 2) - (TILE_GAP / 2) - (TILE_STEP * 4)
 const CIRCLE_SIZE = SCREEN_WIDTH * 0.72
 
 export default function CaseScreen() {
@@ -36,6 +38,12 @@ export default function CaseScreen() {
   const [isPlaying, setIsPlaying] = useState(true)
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
+  
+  const tickPlayer = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
+  const revealPlayer = useAudioPlayer(require('../../../assets/CS - Case result.mp3'))
+  const openingPlayer = useAudioPlayer(require('../../../assets/CS - Case opening.mp3'))
+  
+  const lastTickTile = useRef(0)
 
   const scrollX = useRef(new Animated.Value(0)).current
   const caseOpacity = useRef(new Animated.Value(1)).current
@@ -91,6 +99,26 @@ export default function CaseScreen() {
     }
     return () => { if (progressInterval.current) clearInterval(progressInterval.current) }
   }, [videoVisible])
+  
+  // 🟢 Listen to the physical scroll distance to play the tick and vibrate
+  // 🟢 Listen to the physical scroll distance to play the tick and vibrate
+  useEffect(() => {
+    const listener = scrollX.addListener(({ value }) => {
+      const currentTile = Math.floor(Math.abs(value) / TILE_STEP)
+
+      // Removed the delay check! Now it ticks instantly when crossing a tile.
+      if (currentTile > lastTickTile.current) {
+        lastTickTile.current = currentTile
+        
+        tickPlayer.seekTo(0)
+        tickPlayer.play()
+        
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+      }
+    })
+
+    return () => scrollX.removeListener(listener)
+  }, [scrollX, tickPlayer])
 
   async function fetchCollection() {
     const { data } = await supabase
@@ -133,6 +161,25 @@ export default function CaseScreen() {
 
   async function handleOpen() {
     if (phase !== 'idle' || !userId) return
+
+    // 🟢 AUDIO SEQUENCE 1: Play opening sound
+    openingPlayer.seekTo(0)
+    openingPlayer.play()
+    
+    lastTickTile.current = 0
+
+    // A true Fisher-Yates Shuffle!
+    const shuffledDecoys = [...decoys];
+    for (let i = shuffledDecoys.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledDecoys[i], shuffledDecoys[j]] = [shuffledDecoys[j], shuffledDecoys[i]];
+    }
+    
+    const initialStrip = Array.from({ length: TILE_COUNT }).map((_, index) => {
+      return shuffledDecoys[index % shuffledDecoys.length];
+    });
+    
+    setPaddedTiles(initialStrip);
     setPhase('rolling')
     scrollX.setValue(0)
     revealAnim.setValue(0)
@@ -149,20 +196,21 @@ export default function CaseScreen() {
       const minTiles = 45;
       const maxTiles = 60;
       const tilesToScroll = Math.floor(Math.random() * (maxTiles - minTiles + 1)) + minTiles;
+      const winningIndex = tilesToScroll + 4; 
 
-      const finalStrip = Array.from({ length: TILE_COUNT }).map((_, index) => {
-        if (index === tilesToScroll) {
-          return drop; 
-        }
-        return decoys[index % decoys.length]; 
-      });
-      setPaddedTiles(finalStrip as Video[]); 
+      const finalStrip = [...initialStrip];
+      finalStrip[winningIndex] = {
+        ...drop,
+        rarity_tiers: drop.rarity
+      } as unknown as Video;
+      
+      setPaddedTiles(finalStrip);
 
       const minDuration = 4500;
       const maxDuration = 7000;
       const rollDuration = Math.floor(Math.random() * (maxDuration - minDuration + 1)) + minDuration;
 
-      const randomOffset = (Math.random() * (TILE_WIDTH - 10)) + 5; 
+      const randomOffset = (Math.random() * 60) - 30; 
       const finalScroll = (tilesToScroll * TILE_STEP) + randomOffset;
 
       Animated.timing(scrollX, {
@@ -171,6 +219,11 @@ export default function CaseScreen() {
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start(() => {
+        
+        // 🟢 AUDIO SEQUENCE 3: Play the 5-second reveal sound!
+        revealPlayer.seekTo(0)
+        revealPlayer.play()
+
         setResult(drop)
         setPhase('reveal')
 
@@ -233,9 +286,6 @@ export default function CaseScreen() {
     outputRange: ['0deg', '360deg']
   });
 
-  // Strip center offset so middle tile aligns with indicator
-  const stripInitialOffset = -(TILE_STEP * (TILE_COUNT / 2)) + SCREEN_WIDTH / 2 - TILE_WIDTH / 2
-
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -294,15 +344,18 @@ export default function CaseScreen() {
                 {paddedTiles.map((v, i) => (
                   <View 
                     key={i} 
-                    style={[
-                      styles.tile, 
-                      { 
-                        backgroundColor: v?.rarity_tiers?.color_hex ?? '#333',
-                        // 🟢 THE FIX 2: Stop React Native from trying to squish the tiles to fit the screen
-                        flexShrink: 0 
-                      }
-                    ]} 
-                  />
+                    style={[styles.tile, { flexShrink: 0 }]} 
+                  >
+                    {/* The Thumbnail Image */}
+                    <Image 
+                      source={{ uri: v?.thumbnail_url }} 
+                      style={styles.rollThumb} 
+                      resizeMode="cover" 
+                    />
+                    
+                    {/* The Rarity Color Bar */}
+                    <View style={[styles.rollRarityBar, { backgroundColor: v?.rarity_tiers?.color_hex ?? '#333' }]} />
+                  </View>
                 ))}
               </Animated.View>
             </View>
@@ -325,7 +378,12 @@ export default function CaseScreen() {
           transform: [{ translateY: revealTranslateY }],
           borderColor: result.rarity.color_hex,
         }]}>
-          <View style={[styles.revealColorDot, { backgroundColor: result.rarity.color_hex }]} />
+          {/* 🟢 THE FIX: Replaced the solid color dot with the actual thumbnail */}
+          <Image 
+            source={{ uri: result.thumbnail_url }} 
+            style={styles.revealThumb} 
+            resizeMode="cover" 
+          />
           <View style={styles.revealInfo}>
             <Text style={[styles.revealRarity, { color: result.rarity.color_hex }]}>{result.rarity.name.toUpperCase()}</Text>
             <Text style={styles.revealTitle} numberOfLines={1}>{result.title}</Text>
@@ -412,14 +470,18 @@ const styles = StyleSheet.create({
     marginVertical: 40,
     overflow: 'hidden'
   },
-  stripClip: { width: '100%', height: TILE_WIDTH, justifyContent: 'center' },
+  stripClip: { width: '100%', height: 100, justifyContent: 'center' }, 
   strip: { 
     flexDirection: 'row', 
     alignItems: 'center', 
     position: 'absolute',
-    width: TILE_COUNT * TILE_STEP // This forces RN to render the whole strip!
+    width: TILE_COUNT * TILE_STEP 
   },
-  tile: { width: TILE_WIDTH, height: TILE_WIDTH, borderRadius: 6, marginHorizontal: TILE_GAP / 2 },
+  
+  tile: { width: TILE_WIDTH, marginHorizontal: TILE_GAP / 2 }, 
+  
+  rollThumb: { width: TILE_WIDTH, height: 80, borderRadius: 4, backgroundColor: '#1a1a1a' },
+  rollRarityBar: { width: TILE_WIDTH, height: 4, marginTop: -4, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
   fadeLeft: { 
     position: 'absolute', left: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' 
   },
@@ -479,7 +541,8 @@ const styles = StyleSheet.create({
 
   // Reveal card
   revealCard: { position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: '#1a1a1a', borderRadius: 16, borderWidth: 1.5, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  revealColorDot: { width: 44, height: 44, borderRadius: 10 },
+  // Swapped the dot for the thumbnail image style
+  revealThumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: '#1a1a1a' },
   revealInfo: { flex: 1 },
   revealRarity: { fontSize: 11, fontWeight: '700', letterSpacing: 1.5, marginBottom: 3 },
   revealTitle: { fontSize: 15, fontWeight: '600', color: '#fff' },

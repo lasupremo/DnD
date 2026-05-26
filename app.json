@@ -4,11 +4,17 @@
     "slug": "dnd",
     "version": "1.0.0",
     "scheme": "dnd",
-    "platforms": ["ios", "android"],
-    "assetBundlePatterns": ["**/*"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "plugins": [
       "expo-router",
-      "expo-video"
+      "expo-video",
+      "expo-audio"
     ]
   }
 }
