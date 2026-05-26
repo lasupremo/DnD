@@ -2,23 +2,20 @@ import { useEffect, useState, useRef } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Animated, Easing, Alert, Dimensions, Modal, Image } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
+import { Audio } from 'expo-av'
+import * as Haptics from 'expo-haptics'
 import { supabase } from '../../../lib/supabase'
 import { openCase } from '../../../lib/roll'
 import { Collection, DropResult, Video } from '../../../types'
-import { useAudioPlayer } from 'expo-audio'
-import * as Haptics from 'expo-haptics'
 
 type Phase = 'idle' | 'rolling' | 'reveal'
 
-const RARITY_COLORS = ['#6496C8', '#8847FF', '#D32CE6', '#EB4B4B', '#E4AE39']
-const TILE_COUNT = 70 
+const TILE_COUNT = 70
 const TILE_WIDTH = 80
 const TILE_GAP = 12
 const TILE_STEP = TILE_WIDTH + TILE_GAP
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
-
+const { width: SCREEN_WIDTH } = Dimensions.get('window')
 const stripInitialOffset = (SCREEN_WIDTH / 2) - (TILE_WIDTH / 2) - (TILE_GAP / 2) - (TILE_STEP * 4)
-const CIRCLE_SIZE = SCREEN_WIDTH * 0.72
 
 export default function CaseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -29,64 +26,81 @@ export default function CaseScreen() {
   const [result, setResult] = useState<DropResult | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [userId, setUserId] = useState<string>('')
-  const [tilesReady, setTilesReady] = useState(false)
-  
-  // 🟢 ADDED: The missing state variable!
   const [paddedTiles, setPaddedTiles] = useState<Video[]>([])
-  
   const [videoVisible, setVideoVisible] = useState(false)
   const [isPlaying, setIsPlaying] = useState(true)
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
-  
-  const tick1 = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
-  const tick2 = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
-  const tick3 = useAudioPlayer(require('../../../assets/CS - Case rolling tick.mp3'))
-  
-  const tickPool = [tick1, tick2, tick3]
-  const tickIndex = useRef(0)
-  
-  const lastTickTime = useRef(0)
-  const lastHapticTime = useRef(0) // 🟢 NEW: Dedicated limiter for vibrations
-  
-  const revealPlayer = useAudioPlayer(require('../../../assets/CS - Case result.mp3'))
-  const openingPlayer = useAudioPlayer(require('../../../assets/CS - Case opening.mp3'))
-  
-  const lastTickTile = useRef(0)
+  const [soundsReady, setSoundsReady] = useState(false)
 
+  // Audio refs
+  const revealSound = useRef<Audio.Sound | null>(null)
+  const openingSound = useRef<Audio.Sound | null>(null)
+
+  // Tick interval refs
+  const rollDistance = useRef<number>(0)
+
+  // Animated values
   const scrollX = useRef(new Animated.Value(0)).current
   const caseOpacity = useRef(new Animated.Value(1)).current
-  const caseScale = useRef(new Animated.Value(1)).current // 🟢 NEW: Controls the pop animation
+  const caseScale = useRef(new Animated.Value(1)).current
   const revealAnim = useRef(new Animated.Value(0)).current
   const videoScale = useRef(new Animated.Value(0.8)).current
   const videoOpacity = useRef(new Animated.Value(0)).current
   const progressInterval = useRef<ReturnType<typeof setInterval> | null>(null)
   const spinAnim = useRef(new Animated.Value(0)).current
 
+  const player = useVideoPlayer(result?.cdn_url ?? '', (p) => { p.loop = true })
+
+  // Load ONLY opening and reveal sounds
   useEffect(() => {
-    let animation: Animated.CompositeAnimation;
-    
+    async function loadSounds() {
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        allowsRecordingIOS: false,
+      })
+
+      const { sound: reveal } = await Audio.Sound.createAsync(
+        require('../../../assets/reveal.mp3'),
+        { shouldPlay: false, volume: 1.0 }
+      )
+      revealSound.current = reveal
+
+      const { sound: opening } = await Audio.Sound.createAsync(
+        require('../../../assets/opening.mp3'),
+        { shouldPlay: false, volume: 1.0 }
+      )
+      openingSound.current = opening
+
+      setSoundsReady(true)
+    }
+    loadSounds()
+
+    return () => {
+      revealSound.current?.unloadAsync().catch(() => {})
+      openingSound.current?.unloadAsync().catch(() => {})
+    }
+  }, [])
+
+  // Spin animation when idle
+  useEffect(() => {
+    let animation: Animated.CompositeAnimation
     if (phase === 'idle') {
-      spinAnim.setValue(0);
+      spinAnim.setValue(0)
       animation = Animated.loop(
         Animated.timing(spinAnim, {
           toValue: 1,
-          duration: 4000, 
+          duration: 4000,
           easing: Easing.linear,
           useNativeDriver: true,
         })
-      );
-      animation.start();
+      )
+      animation.start()
     } else {
-      spinAnim.stopAnimation();
+      spinAnim.stopAnimation()
     }
-    
-    return () => {
-      if (animation) animation.stop();
-    };
-  }, [phase]);
-
-  const player = useVideoPlayer(result?.cdn_url ?? '', (p) => { p.loop = true })
+    return () => { if (animation) animation.stop() }
+  }, [phase])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -96,6 +110,7 @@ export default function CaseScreen() {
     fetchDecoys()
   }, [id])
 
+  // Video progress tracking
   useEffect(() => {
     if (videoVisible) {
       progressInterval.current = setInterval(() => {
@@ -109,41 +124,33 @@ export default function CaseScreen() {
     }
     return () => { if (progressInterval.current) clearInterval(progressInterval.current) }
   }, [videoVisible])
-  
-// 🟢 Listen to the physical scroll distance to play the tick and vibrate
+
+  // 🟢 THE SPATIAL HAPTIC LISTENER
   useEffect(() => {
+    if (phase !== 'rolling') return;
+
+    let lastTriggeredTile = -1;
+    let lastHapticTime = 0;
+
     const listener = scrollX.addListener(({ value }) => {
-      // 🟢 THE FIX 1: Add half a tile step to the math! 
-      // This forces the tick to fire the exact pixel the LEFT EDGE touches the indicator, 
-      // guaranteeing the final winning tile will always click!
-      const currentTile = Math.floor((Math.abs(value) + (TILE_STEP / 2)) / TILE_STEP)
+      const currentPos = Math.abs(value);
+      const currentTile = Math.floor((currentPos + (TILE_STEP / 2)) / TILE_STEP);
 
-      if (currentTile > lastTickTile.current) {
-        lastTickTile.current = currentTile
-        const now = Date.now()
+      if (currentTile > lastTriggeredTile) {
+        lastTriggeredTile = currentTile;
+        const now = Date.now();
 
-        if (now - lastTickTime.current > 60) {
-          lastTickTime.current = now
-
-          // 🟢 THE FIX 2: Build the pool inside the listener to prevent stale React closures!
-          const activePool = [tick1, tick2, tick3]
-          const player = activePool[tickIndex.current]
-          
-          player.seekTo(0)
-          player.play()
-
-          tickIndex.current = (tickIndex.current + 1) % activePool.length
-        }
-
-        if (now - lastHapticTime.current > 100) {
-          lastHapticTime.current = now
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+        // HAPTIC SPEED LIMITER (Max ~12 vibrations per second)
+        // Protects the UI thread from freezing while still feeling like a continuous rumble
+        if (now - lastHapticTime > 80) {
+          lastHapticTime = now;
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
         }
       }
-    })
+    });
 
-    return () => scrollX.removeListener(listener)
-  }, [scrollX, tick1, tick2, tick3])
+    return () => scrollX.removeListener(listener);
+  }, [phase, scrollX]);
 
   async function fetchCollection() {
     const { data } = await supabase
@@ -160,39 +167,30 @@ export default function CaseScreen() {
       .eq('collection_id', id)
       .eq('is_active', true)
       .limit(30)
-      
-    if (data) { 
-      const fetchedVideos = data as unknown as Video[];
 
+    if (data) {
+      const fetchedVideos = data as unknown as Video[]
       const sortedVideos = fetchedVideos.sort((a, b) => {
-        const orderA = a.rarity_tiers?.sort_order ?? 999; 
-        const orderB = b.rarity_tiers?.sort_order ?? 999;
-        
-        return orderA - orderB;
-      });
-
-      setDecoys(sortedVideos);
-
-      const filledStrip = Array.from({ length: TILE_COUNT }).map((_, index) => {
-        return sortedVideos[index % sortedVideos.length];
-      });
-
-      setPaddedTiles(filledStrip);
-      setTilesReady(true);
+        const orderA = a.rarity_tiers?.sort_order ?? 999
+        const orderB = b.rarity_tiers?.sort_order ?? 999
+        return orderA - orderB
+      })
+      setDecoys(sortedVideos)
+      const filledStrip = Array.from({ length: TILE_COUNT }).map((_, index) =>
+        sortedVideos[index % sortedVideos.length]
+      )
+      setPaddedTiles(filledStrip)
     }
   }
 
   async function handleOpen() {
-    if (phase !== 'idle' || !userId) return
+    if (phase !== 'idle' || !userId || !soundsReady) return
 
-    tickIndex.current = 0 
-    lastTickTile.current = 0
+    if (openingSound.current) {
+      await openingSound.current.setPositionAsync(0)
+      openingSound.current.playAsync().catch(() => {})
+    }
 
-    // 1. Play opening sound immediately
-    openingPlayer.seekTo(0)
-    openingPlayer.play()
-
-    // 2. The "Pop and Vanish" Animation!
     Animated.parallel([
       Animated.timing(caseOpacity, { toValue: 0, duration: 500, useNativeDriver: true }),
       Animated.sequence([
@@ -201,58 +199,55 @@ export default function CaseScreen() {
       ])
     ]).start()
 
-    const shuffledDecoys = [...decoys];
+    const shuffledDecoys = [...decoys]
     for (let i = shuffledDecoys.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [shuffledDecoys[i], shuffledDecoys[j]] = [shuffledDecoys[j], shuffledDecoys[i]];
+      [shuffledDecoys[i], shuffledDecoys[j]] = [shuffledDecoys[j], shuffledDecoys[i]]
     }
-    
-    const initialStrip = Array.from({ length: TILE_COUNT }).map((_, index) => {
-      return shuffledDecoys[index % shuffledDecoys.length];
-    });
+
+    const initialStrip = Array.from({ length: TILE_COUNT }).map((_, index) =>
+      shuffledDecoys[index % shuffledDecoys.length]
+    )
 
     try {
       const dropPromise = openCase(id, userId)
       const delayPromise = new Promise(resolve => setTimeout(resolve, 1640))
-
       const [drop] = await Promise.all([dropPromise, delayPromise])
 
-      setPaddedTiles(initialStrip);
+      setPaddedTiles(initialStrip)
       setPhase('rolling')
       scrollX.setValue(0)
       revealAnim.setValue(0)
 
-      const minTiles = 45;
-      const maxTiles = 60;
-      const tilesToScroll = Math.floor(Math.random() * (maxTiles - minTiles + 1)) + minTiles;
-      const winningIndex = tilesToScroll + 4; 
+      const minTiles = 45
+      const maxTiles = 60
+      const tilesToScroll = Math.floor(Math.random() * (maxTiles - minTiles + 1)) + minTiles
+      const winningIndex = tilesToScroll + 4
 
-      const finalStrip = [...initialStrip];
+      const finalStrip = [...initialStrip]
       finalStrip[winningIndex] = {
         ...drop,
         rarity_tiers: drop.rarity
-      } as unknown as Video;
-      
-      setPaddedTiles(finalStrip);
+      } as unknown as Video
 
-      const rollDuration = 7000;
+      setPaddedTiles(finalStrip)
 
-      const randomOffset = (Math.random() * 60) - 30; 
-      const finalScroll = (tilesToScroll * TILE_STEP) + randomOffset;
+      const rollDuration = 7000
+      const randomOffset = (Math.random() * 60) - 30
+      const finalScroll = (tilesToScroll * TILE_STEP) + randomOffset   
 
-      // 🟢 3. THE FIX: The 150ms Buffer!
-      // This gives the phone enough time to actually draw the 70 heavy image tiles on the screen 
-      // BEFORE the animation starts. It will now start smoothly from Tile 4 and you will hear every tick!
       setTimeout(() => {
         Animated.timing(scrollX, {
           toValue: -finalScroll,
           duration: rollDuration,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
-        }).start(() => {
-          
-          revealPlayer.seekTo(0)
-          revealPlayer.play()
+        }).start(async () => {
+
+          if (revealSound.current) {
+            await revealSound.current.setPositionAsync(0)
+            revealSound.current.playAsync().catch(() => {})
+          }
 
           setResult(drop)
           setPhase('reveal')
@@ -269,7 +264,7 @@ export default function CaseScreen() {
       setPhase('idle')
       scrollX.setValue(0)
       Animated.timing(caseOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start()
-      Animated.spring(caseScale, { toValue: 1, useNativeDriver: true }).start() // Reset scale on error
+      Animated.spring(caseScale, { toValue: 1, useNativeDriver: true }).start()
     }
   }
 
@@ -300,7 +295,7 @@ export default function CaseScreen() {
     setResult(null)
     scrollX.setValue(0)
     caseOpacity.setValue(1)
-    caseScale.setValue(1) // 🟢 Reset the icon scale back to normal!
+    caseScale.setValue(1)
     revealAnim.setValue(0)
   }
 
@@ -310,58 +305,43 @@ export default function CaseScreen() {
   }
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
-
   const revealTranslateY = revealAnim.interpolate({ inputRange: [0, 1], outputRange: [80, 0] })
   const revealOpacity = revealAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] })
-
-  const spin = spinAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg']
-  });
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
         <Text style={styles.backText}>← Back</Text>
       </TouchableOpacity>
 
-      {/* Title */}
       <Text style={styles.pressLabel}>Press to Open</Text>
       <Text style={styles.subLabel}>
         Open <Text style={styles.subLabelBold}>{collection?.name}</Text> videos
       </Text>
 
-      {/* Dynamic Layout based on Phase */}
       {phase === 'idle' ? (
         <>
-          {/* IDLE: Large Rotating Smiley */}
-          <Animated.View style={[styles.caseIconWrapper, { transform: [{ rotate: spin }] }]}>
-            <TouchableOpacity onPress={handleOpen} activeOpacity={0.85}>
-              {/* 🟢 THE FIX: Made this an Animated.Image and attached the opacity and scale! */}
-              <Animated.Image 
-                source={require('../../../assets/smiley.png')} 
-                style={[
-                  styles.caseIcon, 
-                  { 
-                    opacity: caseOpacity, 
-                    transform: [{ scale: caseScale }] 
-                  }
-                ]} 
-                resizeMode="contain" 
+          <Animated.View style={[styles.caseIconWrapper, {
+            opacity: caseOpacity,
+            transform: [{ rotate: spin }, { scale: caseScale }]
+          }]}>
+            <TouchableOpacity onPress={handleOpen} activeOpacity={0.85} disabled={!soundsReady}>
+              <Image
+                source={require('../../../assets/smiley.png')}
+                style={[styles.caseIcon, { opacity: soundsReady ? 1 : 0.4 }]}
+                resizeMode="contain"
               />
             </TouchableOpacity>
           </Animated.View>
 
-          {/* IDLE: Exact Figma Video Grid */}
           <View style={styles.videoGrid}>
             {decoys.slice(0, 8).map((v, i) => (
               <View key={i} style={styles.gridThumbWrapper}>
-                {/* Replaced the placeholder View with an Image component */}
-                <Image 
-                  source={{ uri: v.thumbnail_url }} 
-                  style={styles.gridThumb} 
-                  resizeMode="cover" 
+                <Image
+                  source={{ uri: v.thumbnail_url }}
+                  style={styles.gridThumb}
+                  resizeMode="cover"
                 />
                 <View style={[styles.gridRarityBar, { backgroundColor: v.rarity_tiers?.color_hex ?? '#6496C8' }]} />
                 <Text style={styles.gridThumbLabel} numberOfLines={1}>{v.title}</Text>
@@ -370,66 +350,53 @@ export default function CaseScreen() {
           </View>
         </>
       ) : (
-        <>
-          {/* ROLLING/REVEAL: CS:GO Style Horizontal Strip */}
-          <View style={styles.caseContainer}>
-            <View style={styles.stripClip}>
-              <Animated.View 
-                collapsable={false} 
-                style={[
-                  styles.strip, 
-                  { 
-                    // 🟢 THE FIX 1: Force the engine to allocate space for all 70 tiles (~6400 pixels)
-                    width: TILE_COUNT * TILE_STEP, 
-                    transform: [{ translateX: Animated.add(new Animated.Value(stripInitialOffset), scrollX) }] 
-                  }
-                ]}
-              >
-                {paddedTiles.map((v, i) => (
-                  <View 
-                    key={i} 
-                    style={[styles.tile, { flexShrink: 0 }]} 
-                  >
-                    {/* The Thumbnail Image */}
-                    <Image 
-                      source={{ uri: v?.thumbnail_url }} 
-                      style={styles.rollThumb} 
-                      resizeMode="cover" 
-                    />
-                    
-                    {/* The Rarity Color Bar */}
-                    <View style={[styles.rollRarityBar, { backgroundColor: v?.rarity_tiers?.color_hex ?? '#333' }]} />
-                  </View>
-                ))}
-              </Animated.View>
-            </View>
-
-            {/* Dark gradient fades on edges */}
-            <View style={styles.fadeLeft} pointerEvents="none" />
-            <View style={styles.fadeRight} pointerEvents="none" />
-
-            {/* Top and Bottom Indicator Triangles */}
-            <View style={styles.indicatorTop} pointerEvents="none" />
-            <View style={styles.indicatorBottom} pointerEvents="none" />
+        <View style={styles.caseContainer}>
+          <View style={styles.stripClip}>
+            <Animated.View
+              collapsable={false}
+              style={[
+                styles.strip,
+                {
+                  width: TILE_COUNT * TILE_STEP,
+                  transform: [{ translateX: Animated.add(new Animated.Value(stripInitialOffset), scrollX) }]
+                }
+              ]}
+            >
+              {paddedTiles.map((v, i) => (
+                <View key={i} style={[styles.tile, { flexShrink: 0 }]}>
+                  <Image
+                    source={{ uri: v?.thumbnail_url }}
+                    style={styles.rollThumb}
+                    resizeMode="cover"
+                  />
+                  <View style={[styles.rollRarityBar, { backgroundColor: v?.rarity_tiers?.color_hex ?? '#333' }]} />
+                </View>
+              ))}
+            </Animated.View>
           </View>
-        </>
+
+          <View style={styles.fadeLeft} pointerEvents="none" />
+          <View style={styles.fadeRight} pointerEvents="none" />
+          <View style={styles.indicatorTop} pointerEvents="none" />
+          <View style={styles.indicatorBottom} pointerEvents="none" />
+        </View>
       )}
 
-      {/* Reveal card */}
       {phase === 'reveal' && result && (
         <Animated.View style={[styles.revealCard, {
           opacity: revealOpacity,
           transform: [{ translateY: revealTranslateY }],
           borderColor: result.rarity.color_hex,
         }]}>
-          {/* 🟢 THE FIX: Replaced the solid color dot with the actual thumbnail */}
-          <Image 
-            source={{ uri: result.thumbnail_url }} 
-            style={styles.revealThumb} 
-            resizeMode="cover" 
+          <Image
+            source={{ uri: result.thumbnail_url }}
+            style={styles.revealThumb}
+            resizeMode="cover"
           />
           <View style={styles.revealInfo}>
-            <Text style={[styles.revealRarity, { color: result.rarity.color_hex }]}>{result.rarity.name.toUpperCase()}</Text>
+            <Text style={[styles.revealRarity, { color: result.rarity.color_hex }]}>
+              {result.rarity.name.toUpperCase()}
+            </Text>
             <Text style={styles.revealTitle} numberOfLines={1}>{result.title}</Text>
           </View>
           <View style={styles.revealButtons}>
@@ -443,7 +410,6 @@ export default function CaseScreen() {
         </Animated.View>
       )}
 
-      {/* Video modal */}
       <Modal visible={videoVisible} transparent animationType="none" onRequestClose={handleCloseVideo}>
         <View style={styles.modalBg}>
           <Animated.View style={[styles.videoCard, { transform: [{ scale: videoScale }], opacity: videoOpacity }]}>
@@ -456,13 +422,13 @@ export default function CaseScreen() {
               )}
             </TouchableOpacity>
 
-            {/* Video title + rarity */}
             <View style={styles.videoMeta}>
               <Text style={styles.videoTitle}>{result?.title}</Text>
-              <Text style={[styles.videoRarity, { color: result?.rarity.color_hex }]}>{result?.rarity.name.toUpperCase()}</Text>
+              <Text style={[styles.videoRarity, { color: result?.rarity.color_hex }]}>
+                {result?.rarity.name.toUpperCase()}
+              </Text>
             </View>
 
-            {/* Progress bar */}
             <View style={styles.progressRow}>
               <Text style={styles.progressTime}>{formatTime(progress * duration)}</Text>
               <View style={styles.progressTrack}>
@@ -471,7 +437,6 @@ export default function CaseScreen() {
               <Text style={styles.progressTime}>{formatTime(duration)}</Text>
             </View>
 
-            {/* Close */}
             <TouchableOpacity style={styles.videoClose} onPress={handleCloseVideo}>
               <Text style={styles.videoCloseText}>✕</Text>
             </TouchableOpacity>
@@ -482,110 +447,31 @@ export default function CaseScreen() {
   )
 }
 
-const CIRCLE_BORDER = 3
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F0F0F', paddingTop: 56 },
-  backBtn: { paddingHorizontal: 20, marginBottom: 16 },
+  backBtn: { paddingHorizontal: 20, marginBottom: 40 },
   backText: { color: '#888', fontSize: 14 },
   pressLabel: { fontSize: 22, fontWeight: '700', color: '#fff', textAlign: 'center' },
-  subLabel: { fontSize: 13, color: '#555', textAlign: 'center', marginTop: 4, marginBottom: 28 },
+  subLabel: { fontSize: 13, color: '#A0A0A0', textAlign: 'center', marginTop: 4, marginBottom: 0 },
   subLabelBold: { color: '#fff', fontWeight: '600' },
-
-  // --- Smiley / Case Icon ---
-  caseIconWrapper: { 
-    alignSelf: 'center',
-    width: 231, // Exact size from your SVG
-    height: 231, 
-    marginVertical: 40,
-    zIndex: 20, 
-  },
+  caseIconWrapper: { alignSelf: 'center', width: 231, height: 231, marginTop: 40, marginBottom: 40, zIndex: 20 },
   caseIcon: { width: '100%', height: '100%' },
-
-  // CS:GO Case Container
-  caseContainer: { 
-    width: '100%', 
-    height: 140, 
-    backgroundColor: '#141414', 
-    borderTopWidth: 2,
-    borderBottomWidth: 2,
-    borderColor: '#2a2a2a',
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginVertical: 40,
-    overflow: 'hidden'
-  },
-  stripClip: { width: '100%', height: 100, justifyContent: 'center' }, 
-  strip: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    position: 'absolute',
-    width: TILE_COUNT * TILE_STEP 
-  },
-  
-  tile: { width: TILE_WIDTH, marginHorizontal: TILE_GAP / 2 }, 
-  
+  caseContainer: { width: '100%', height: 140, backgroundColor: '#141414', borderTopWidth: 2, borderBottomWidth: 2, borderColor: '#2a2a2a', justifyContent: 'center', alignItems: 'center', marginVertical: 40, overflow: 'hidden' },
+  stripClip: { width: '100%', height: 100, justifyContent: 'center' },
+  strip: { flexDirection: 'row', alignItems: 'center', position: 'absolute', width: TILE_COUNT * TILE_STEP },
+  tile: { width: TILE_WIDTH, marginHorizontal: TILE_GAP / 2 },
   rollThumb: { width: TILE_WIDTH, height: 80, borderRadius: 4, backgroundColor: '#1a1a1a' },
   rollRarityBar: { width: TILE_WIDTH, height: 4, marginTop: -4, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
-  fadeLeft: { 
-    position: 'absolute', left: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' 
-  },
-  fadeRight: { 
-    position: 'absolute', right: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' 
-  },
-  indicatorTop: { 
-    position: 'absolute', 
-    top: 0, 
-    left: '50%', 
-    marginLeft: -12, // Centers the 24px wide triangle
-    width: 0, 
-    height: 0, 
-    borderLeftWidth: 12, 
-    borderRightWidth: 12, 
-    borderTopWidth: 16, 
-    borderLeftColor: 'transparent', 
-    borderRightColor: 'transparent', 
-    borderTopColor: '#e8a020', // Yellow tip pointing down
-    zIndex: 10 
-  },
-  indicatorBottom: { 
-    position: 'absolute', 
-    bottom: 0, 
-    left: '50%', 
-    marginLeft: -12, 
-    width: 0, 
-    height: 0, 
-    borderLeftWidth: 12, 
-    borderRightWidth: 12, 
-    borderBottomWidth: 16, 
-    borderLeftColor: 'transparent', 
-    borderRightColor: 'transparent', 
-    borderBottomColor: '#e8a020', // Yellow tip pointing up
-    zIndex: 10 
-  },
-
-  // Video grid
-  videoGrid: { 
-    flexDirection: 'row', 
-    flexWrap: 'wrap', 
-    paddingHorizontal: 32, // Based on x="32" from SVG
-    gap: 29, // Based on the 121 - 32 - 60 math from SVG
-    justifyContent: 'center',
-    marginTop: 20,
-  },
-  // Removed 'alignItems: center' so the text left-alignment works properly
-  gridThumbWrapper: { width: 60 }, 
-  
-  // Added a dark background fallback while the image loads
-  gridThumb: { width: 60, height: 70, borderRadius: 4, backgroundColor: '#1a1a1a' }, 
-  
+  fadeLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' },
+  fadeRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' },
+  indicatorTop: { position: 'absolute', top: 0, left: '50%', marginLeft: -12, width: 0, height: 0, borderLeftWidth: 12, borderRightWidth: 12, borderTopWidth: 16, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#e8a020', zIndex: 10 },
+  indicatorBottom: { position: 'absolute', bottom: 0, left: '50%', marginLeft: -12, width: 0, height: 0, borderLeftWidth: 12, borderRightWidth: 12, borderBottomWidth: 16, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#e8a020', zIndex: 10 },
+  videoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 32, gap: 29, justifyContent: 'center', marginTop: 20 },
+  gridThumbWrapper: { width: 60 },
+  gridThumb: { width: 60, height: 70, borderRadius: 4, backgroundColor: '#1a1a1a' },
   gridRarityBar: { width: 60, height: 4, marginTop: -4, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
-  
-  // Updated text to white, bold, and left-aligned
   gridThumbLabel: { color: '#fff', fontSize: 9, marginTop: 6, textAlign: 'left', fontWeight: 'bold' },
-
-  // Reveal card
   revealCard: { position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: '#1a1a1a', borderRadius: 16, borderWidth: 1.5, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  // Swapped the dot for the thumbnail image style
   revealThumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: '#1a1a1a' },
   revealInfo: { flex: 1 },
   revealRarity: { fontSize: 11, fontWeight: '700', letterSpacing: 1.5, marginBottom: 3 },
@@ -595,8 +481,6 @@ const styles = StyleSheet.create({
   playBtnText: { color: '#000', fontWeight: '700', fontSize: 13 },
   closeBtn: { borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: '#444' },
   closeBtnText: { color: '#fff', fontSize: 13 },
-
-  // Video modal
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 16 },
   videoCard: { width: SCREEN_WIDTH - 32, borderRadius: 20, backgroundColor: '#111', overflow: 'hidden' },
   videoTouch: { width: '100%', aspectRatio: 9 / 16 },
