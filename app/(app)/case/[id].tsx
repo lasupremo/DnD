@@ -32,6 +32,7 @@ export default function CaseScreen() {
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
   const [soundsReady, setSoundsReady] = useState(false)
+  const [trackWidth, setTrackWidth] = useState(0)
 
   // Audio refs
   const revealSound = useRef<Audio.Sound | null>(null)
@@ -50,7 +51,7 @@ export default function CaseScreen() {
   const progressInterval = useRef<ReturnType<typeof setInterval> | null>(null)
   const spinAnim = useRef(new Animated.Value(0)).current
 
-  const player = useVideoPlayer(result?.cdn_url ?? '', (p) => { p.loop = true })
+  const player = useVideoPlayer(result?.cdn_url ?? '', (p) => { p.loop = false })
 
   // Load ONLY opening and reveal sounds
   useEffect(() => {
@@ -116,14 +117,24 @@ export default function CaseScreen() {
       progressInterval.current = setInterval(() => {
         const current = player.currentTime ?? 0
         const dur = player.duration ?? 0
-        if (dur > 0) { setProgress(current / dur); setDuration(dur) }
+        
+        if (dur > 0) { 
+          setProgress(current / dur)
+          setDuration(dur)
+          
+          // 🟢 ADD THIS: If the video reaches the very end, pause the UI
+          // We use 0.99 (99%) because sometimes the interval fires right before the exact final millisecond
+          if (current / dur >= 0.99 && isPlaying) {
+            setIsPlaying(false)
+          }
+        }
       }, 300)
     } else {
       if (progressInterval.current) clearInterval(progressInterval.current)
       setProgress(0)
     }
     return () => { if (progressInterval.current) clearInterval(progressInterval.current) }
-  }, [videoVisible])
+  }, [videoVisible, isPlaying]) // 🟢 Note: add isPlaying to the dependency array here so the state doesn't get stale
 
   // 🟢 THE SPATIAL HAPTIC LISTENER
   useEffect(() => {
@@ -299,9 +310,34 @@ export default function CaseScreen() {
     revealAnim.setValue(0)
   }
 
+  function handleSeek(e: any) {
+    if (trackWidth === 0 || duration === 0) return;
+    
+    // Get the exact X coordinate of the user's finger on the track
+    const touchX = e.nativeEvent.locationX;
+    
+    // Clamp the percentage between 0 and 1 so it doesn't break if they drag outside the lines
+    const percentage = Math.max(0, Math.min(1, touchX / trackWidth));
+    
+    // Command the expo-video player to jump to the new time
+    player.currentTime = percentage * duration;
+    
+    // Update the UI instantly so it feels responsive
+    setProgress(percentage);
+  }
+
   function togglePlayPause() {
-    if (isPlaying) { player.pause(); setIsPlaying(false) }
-    else { player.play(); setIsPlaying(true) }
+    if (isPlaying) { 
+      player.pause(); 
+      setIsPlaying(false);
+    } else { 
+      // 🟢 ADD THIS: If they are at the end of the video, rewind back to 0 before playing
+      if (progress >= 0.99) {
+        player.currentTime = 0;
+      }
+      player.play(); 
+      setIsPlaying(true);
+    }
   }
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
@@ -414,7 +450,7 @@ export default function CaseScreen() {
         <View style={styles.modalBg}>
           <Animated.View style={[styles.videoCard, { transform: [{ scale: videoScale }], opacity: videoOpacity }]}>
             <TouchableOpacity activeOpacity={1} onPress={togglePlayPause} style={styles.videoTouch}>
-              <VideoView player={player} style={styles.video} contentFit="cover" nativeControls={false} />
+              <VideoView player={player} style={styles.video} contentFit="contain" nativeControls={false} />
               {!isPlaying && (
                 <View style={styles.pauseOverlay}>
                   <Text style={styles.pauseIcon}>▐▐</Text>
@@ -431,8 +467,21 @@ export default function CaseScreen() {
 
             <View style={styles.progressRow}>
               <Text style={styles.progressTime}>{formatTime(progress * duration)}</Text>
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${progress * 100}%`, backgroundColor: result?.rarity.color_hex }]} />
+              <View 
+                style={styles.progressTrack}
+                onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+                onStartShouldSetResponder={() => true}
+                onResponderGrant={handleSeek} // Triggers when they first tap
+                onResponderMove={handleSeek}  // Triggers when they drag/scrub
+                hitSlop={{ top: 20, bottom: 20, left: 10, right: 10 }} // 🟢 Makes the thin 3px bar much easier to tap!
+              >
+                <View 
+                  style={[
+                    styles.progressFill, 
+                    { width: `${progress * 100}%`, backgroundColor: result?.rarity.color_hex }
+                  ]} 
+                  pointerEvents="none" // 🟢 IMPORTANT: This stops the inner fill bar from stealing the touch event and breaking the math!
+                />
               </View>
               <Text style={styles.progressTime}>{formatTime(duration)}</Text>
             </View>
@@ -483,7 +532,7 @@ const styles = StyleSheet.create({
   closeBtnText: { color: '#fff', fontSize: 13 },
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 16 },
   videoCard: { width: SCREEN_WIDTH - 32, borderRadius: 20, backgroundColor: '#111', overflow: 'hidden' },
-  videoTouch: { width: '100%', aspectRatio: 9 / 16 },
+  videoTouch: { width: '100%', aspectRatio: 9 / 16, backgroundColor: '#000' },
   video: { width: '100%', height: '100%' },
   pauseOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
   pauseIcon: { color: '#fff', fontSize: 36, opacity: 0.9 },
