@@ -11,8 +11,9 @@ export type Collection = {
   name: string
   description: string
   cover_image_url: string
-  mystery_title?: string         // 🟢 NEW
-  mystery_thumbnail_url?: string // 🟢 NEW
+  mystery_title?: string
+  mystery_thumbnail_url?: string
+  type?: string
   is_active: boolean
   videos: { count: number }[]
 }
@@ -31,6 +32,7 @@ export type DropResult = {
   cdn_url: string
   thumbnail_url: string
   rarity: RarityTier
+  pity_count: number
 }
 
 export type DropHistory = {

@@ -71,7 +71,7 @@ export default function RootLayout() {
     if (loading || !splashDone) return
     const inAuth = segments[0] === '(auth)'
     if (!session && !inAuth) router.replace('/(auth)/login')
-    if (session && inAuth) router.replace('/(app)/collections')
+    if (session && inAuth) router.replace('/(app)/packs')
   }, [session, loading, splashDone])
 
   if (!splashDone) {

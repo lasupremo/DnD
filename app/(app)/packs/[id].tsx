@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
-import { Audio } from 'expo-av'
+import { useAudioPlayer } from 'expo-audio'
 import * as Haptics from 'expo-haptics'
 import { supabase } from '../../../lib/supabase'
 import { openCase } from '../../../lib/roll'
@@ -80,9 +80,13 @@ export default function CaseScreen() {
   const [soundsReady, setSoundsReady] = useState(false)
   const [trackWidth, setTrackWidth] = useState(0)
 
+  // State for the Pity Tracker UI
+  const [pityVisible, setPityVisible] = useState(false)
+  const [currentPity, setCurrentPity] = useState(0)
+
   // Audio refs
-  const revealSound = useRef<Audio.Sound | null>(null)
-  const openingSound = useRef<Audio.Sound | null>(null)
+  const openingSound = useAudioPlayer(require('../../../assets/opening.mp3'))
+  const revealSound = useAudioPlayer(require('../../../assets/reveal.mp3'))
 
   // Tick interval refs
   const rollDistance = useRef<number>(0)
@@ -99,34 +103,9 @@ export default function CaseScreen() {
 
   const player = useVideoPlayer(result?.cdn_url ?? '', (p) => { p.loop = false })
 
-  // Load ONLY opening and reveal sounds
+  // Load opening and reveal sounds
   useEffect(() => {
-    async function loadSounds() {
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        allowsRecordingIOS: false,
-      })
-
-      const { sound: reveal } = await Audio.Sound.createAsync(
-        require('../../../assets/reveal.mp3'),
-        { shouldPlay: false, volume: 1.0 }
-      )
-      revealSound.current = reveal
-
-      const { sound: opening } = await Audio.Sound.createAsync(
-        require('../../../assets/opening.mp3'),
-        { shouldPlay: false, volume: 1.0 }
-      )
-      openingSound.current = opening
-
-      setSoundsReady(true)
-    }
-    loadSounds()
-
-    return () => {
-      revealSound.current?.unloadAsync().catch(() => {})
-      openingSound.current?.unloadAsync().catch(() => {})
-    }
+    setSoundsReady(true)
   }, [])
 
   // Spin animation when idle
@@ -150,18 +129,29 @@ export default function CaseScreen() {
   }, [phase])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) setUserId(data.user.id)
-    })
-    
-    // 🟢 Chain the fetches together
-    async function loadData() {
+    async function initUserAndData() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        setUserId(user.id)
+        // 🟢 Fetch the user's current pity count
+        const { data: userData } = await supabase
+          .from('users')
+          .select('image_pity') // Change this to 'card_pity' if you renamed it!
+          .eq('id', user.id)
+          .single()
+        
+        if (userData) {
+          setCurrentPity(userData.image_pity || 0)
+        }
+      }
+
       const colData = await fetchCollection()
       if (colData) {
         fetchDecoys(colData)
       }
     }
-    loadData()
+    
+    initUserAndData()
   }, [id])
 
   // Video progress tracking
@@ -220,7 +210,7 @@ export default function CaseScreen() {
     const { data } = await supabase
       .from('collection')
       // 🟢 Added mystery_title and mystery_thumbnail_url to the select
-      .select('id, name, description, cover_image_url, mystery_title, mystery_thumbnail_url, videos(count)')
+      .select('id, name, description, cover_image_url, mystery_title, mystery_thumbnail_url, type, videos(count)')
       .eq('id', id).single()
       
     if (data) {
@@ -231,47 +221,63 @@ export default function CaseScreen() {
   }
 
   async function fetchDecoys(currentCollection: Collection) {
+    // 🟢 1. Dynamically select the table based on the collection type
+    const tableName = currentCollection?.type === 'card' ? 'cards' : 'videos'
+
     const { data } = await supabase
-      .from('videos')
+      .from(tableName)
       .select('id, title, thumbnail_url, rarity_tiers(id, name, color_hex, sort_order, weight_percent)')
       .eq('collection_id', id)
       .eq('is_active', true)
       .limit(30)
 
     if (data) {
-      const fetchedVideos = data as unknown as Video[]
-      
-      // 🟢 1. Hide all the real Contraband videos from the wheel
-      const standardVideos = fetchedVideos.filter(
+      // (We can safely keep casting it as Video[] because Cards and Videos share the exact same UI structure here!)
+      const fetchedItems = data as unknown as Video[] 
+
+      // 2. Hide all the real Contraband items from the wheel (so they only appear when actually won)
+      const standardItems = fetchedItems.filter(
         v => v.rarity_tiers?.name.toLowerCase() !== 'contraband'
       )
+
+      if (standardItems.length === 0) return
+
+      // 3. Shuffle the items to make the wheel look random
+      for (let i = standardItems.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [standardItems[i], standardItems[j]] = [standardItems[j], standardItems[i]]
+      }
+
+      // 4. Fill the array up to exactly 30 items
+      const filledDecoys: Video[] = []
+      while (filledDecoys.length < 30) {
+        filledDecoys.push(...standardItems)
+      }
+      const finalDecoys = filledDecoys.slice(0, 30)
       
-      // 🟢 2. Generate the custom dummy tile and put it in the list
-      const dynamicDummy = getMysteryTile(currentCollection);
-      const displayVideos = [...standardVideos, dynamicDummy]
-
-      // 🟢 3. Sort them exactly as before
-      const sortedVideos = displayVideos.sort((a, b) => {
-        const orderA = a.rarity_tiers?.sort_order ?? 999
-        const orderB = b.rarity_tiers?.sort_order ?? 999
-        return orderA - orderB
-      })
-
-      setDecoys(sortedVideos)
-      const filledStrip = Array.from({ length: TILE_COUNT }).map(() =>
-        getWeightedRandomVideo(displayVideos)
-      )
-      setPaddedTiles(filledStrip)
+      setDecoys(finalDecoys)
+      
+      // 5. Inject the Mystery Contraband tile right before the winning tile!
+      const mysteryTile: Video = {
+        id: 'mystery-contraband',
+        title: currentCollection?.mystery_title || '★ RARE SPECIAL ITEM',
+        thumbnail_url: currentCollection?.mystery_thumbnail_url || 'https://via.placeholder.com/150/FFD700/000000?text=?',
+        cdn_url: '',
+        rarity_tiers: { id: '0', name: 'Contraband', color_hex: '#e8a020', sort_order: 0, weight_percent: 0 }
+      }
+      
+      const sequence = [...finalDecoys]
+      sequence[28] = mysteryTile 
+      
+      setPaddedTiles(sequence)
     }
   }
 
   async function handleOpen() {
     if (phase !== 'idle' || !userId || !soundsReady) return
 
-    if (openingSound.current) {
-      await openingSound.current.setPositionAsync(0)
-      openingSound.current.playAsync().catch(() => {})
-    }
+    openingSound.seekTo(0)
+    openingSound.play()
 
     // 🟢 1.5 Second Tension Animation
     Animated.parallel([
@@ -305,6 +311,10 @@ export default function CaseScreen() {
       const dropPromise = openCase(id, userId)
       const delayPromise = new Promise(resolve => setTimeout(resolve, 1640))
       const [drop] = await Promise.all([dropPromise, delayPromise])
+
+      if (drop.pity_count !== undefined) {
+        setCurrentPity(drop.pity_count)
+      }
 
       setPaddedTiles(initialStrip)
       setPhase('rolling')
@@ -342,10 +352,8 @@ export default function CaseScreen() {
           useNativeDriver: true,
         }).start(async () => {
 
-          if (revealSound.current) {
-            await revealSound.current.setPositionAsync(0)
-            revealSound.current.playAsync().catch(() => {})
-          }
+          revealSound.seekTo(0)
+          revealSound.play()
 
           setResult(drop)
           setPhase('reveal')
@@ -368,8 +376,10 @@ export default function CaseScreen() {
 
   function handlePlay() {
     setVideoVisible(true)
-    setIsPlaying(true)
-    player.play()
+    if (collection?.type !== 'card') {
+      setIsPlaying(true)
+      player.play()
+    }
     Animated.parallel([
       Animated.spring(videoScale, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }),
       Animated.timing(videoOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
@@ -381,7 +391,9 @@ export default function CaseScreen() {
       Animated.timing(videoScale, { toValue: 0.8, duration: 200, useNativeDriver: true }),
       Animated.timing(videoOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
     ]).start(() => {
-      player.pause()
+      if (collection?.type !== 'card') {
+        player.pause()
+      }
       setVideoVisible(false)
       videoScale.setValue(0.8)
       videoOpacity.setValue(0)
@@ -414,11 +426,12 @@ export default function CaseScreen() {
   }
 
   function togglePlayPause() {
+    if (collection?.type === 'card') return; // 🟢 Do nothing if it's an image card!
+    
     if (isPlaying) { 
       player.pause(); 
       setIsPlaying(false);
     } else { 
-      // 🟢 ADD THIS: If they are at the end of the video, rewind back to 0 before playing
       if (progress >= 0.99) {
         player.currentTime = 0;
       }
@@ -440,24 +453,53 @@ export default function CaseScreen() {
 
       <Text style={styles.pressLabel}>Press to Open</Text>
       <Text style={styles.subLabel}>
-        Open <Text style={styles.subLabelBold}>{collection?.name}</Text> videos
+        Open <Text style={styles.subLabelBold}>{collection?.name}</Text> pack
       </Text>
 
       {phase === 'idle' ? (
         <>
+
+         {/* 🟢 THE SPINNING COLLECTION ICON BUTTON */}
           <Animated.View style={[styles.caseIconWrapper, {
             opacity: caseOpacity,
             transform: [{ rotate: spin }, { scale: caseScale }]
           }]}>
-            <TouchableOpacity onPress={handleOpen} activeOpacity={0.85} disabled={!soundsReady}>
-              <Image
-                source={require('../../../assets/smiley.png')}
-                style={[styles.caseIcon, { opacity: soundsReady ? 1 : 0.4 }]}
-                contentFit="contain"
-                transition={200}
-              />
+            <TouchableOpacity 
+              onPress={handleOpen} 
+              activeOpacity={0.85} 
+              disabled={!soundsReady || phase !== 'idle'}
+            >
+              {collection?.cover_image_url ? (
+                <Image
+                  source={{ uri: collection.cover_image_url }}
+                  style={[
+                    styles.caseIcon, 
+                    { 
+                      opacity: (soundsReady && phase === 'idle') ? 1 : 0.4,
+                      borderRadius: 999, // 🟢 Forces a perfect circular crop!
+                      overflow: 'hidden'
+                    }
+                  ]}
+                  contentFit="cover"
+                  transition={200}
+                />
+              ) : (
+                // Fallback just in case a collection is missing an image
+                <View style={[styles.caseIcon, { backgroundColor: '#333', borderRadius: 999 }]} />
+              )}
             </TouchableOpacity>
           </Animated.View>
+
+          {/* 🟢 PITY TRACKER BUTTON */}
+          <View style={styles.pityButtonWrapper}>
+            <TouchableOpacity 
+              style={styles.pityButton} 
+              onPress={() => setPityVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.pityButtonText}>Pity Progress: {currentPity} / 50</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* 🟢 1. The Thin Separator Line */}
           <View style={styles.dropPoolLine} />
@@ -543,7 +585,10 @@ export default function CaseScreen() {
           </View>
           <View style={styles.revealButtons}>
             <TouchableOpacity style={[styles.playBtn, { backgroundColor: result.rarity.color_hex }]} onPress={handlePlay}>
-              <Text style={styles.playBtnText}>Play</Text>
+              {/* 🟢 DYNAMIC BUTTON TEXT */}
+              <Text style={styles.playBtnText}>
+                {collection?.type === 'card' ? 'Open' : 'Play'}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.closeBtn} onPress={handleClose}>
               <Text style={styles.closeBtnText}>Close</Text>
@@ -556,12 +601,25 @@ export default function CaseScreen() {
         <View style={styles.modalBg}>
           <Animated.View style={[styles.videoCard, { transform: [{ scale: videoScale }], opacity: videoOpacity }]}>
             <TouchableOpacity activeOpacity={1} onPress={togglePlayPause} style={styles.videoTouch}>
-              <VideoView player={player} style={styles.video} contentFit="contain" nativeControls={false} />
-              {!isPlaying && (
-                <View style={styles.pauseOverlay}>
-                  <Text style={styles.pauseIcon}>▐▐</Text>
-                </View>
+              
+              {/* 🟢 IF CARD: Show bordered image. IF TAPE: Show video player */}
+              {collection?.type === 'card' ? (
+                <Image 
+                  source={{ uri: result?.cdn_url || result?.thumbnail_url }} 
+                  style={[styles.video, { borderWidth: 4, borderColor: result?.rarity.color_hex }]} 
+                  contentFit="contain" 
+                />
+              ) : (
+                <>
+                  <VideoView player={player} style={styles.video} contentFit="contain" nativeControls={false} />
+                  {!isPlaying && (
+                    <View style={styles.pauseOverlay}>
+                      <Text style={styles.pauseIcon}>▐▐</Text>
+                    </View>
+                  )}
+                </>
               )}
+
             </TouchableOpacity>
 
             <View style={styles.videoMeta}>
@@ -571,26 +629,29 @@ export default function CaseScreen() {
               </Text>
             </View>
 
-            <View style={styles.progressRow}>
-              <Text style={styles.progressTime}>{formatTime(progress * duration)}</Text>
-              <View 
-                style={styles.progressTrack}
-                onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
-                onStartShouldSetResponder={() => true}
-                onResponderGrant={handleSeek} // Triggers when they first tap
-                onResponderMove={handleSeek}  // Triggers when they drag/scrub
-                hitSlop={{ top: 20, bottom: 20, left: 10, right: 10 }} // 🟢 Makes the thin 3px bar much easier to tap!
-              >
+            {/* 🟢 HIDE PROGRESS BAR FOR CARDS */}
+            {collection?.type !== 'card' && (
+              <View style={styles.progressRow}>
+                <Text style={styles.progressTime}>{formatTime(progress * duration)}</Text>
                 <View 
-                  style={[
-                    styles.progressFill, 
-                    { width: `${progress * 100}%`, backgroundColor: result?.rarity.color_hex }
-                  ]} 
-                  pointerEvents="none" // 🟢 IMPORTANT: This stops the inner fill bar from stealing the touch event and breaking the math!
-                />
+                  style={styles.progressTrack}
+                  onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+                  onStartShouldSetResponder={() => true}
+                  onResponderGrant={handleSeek} 
+                  onResponderMove={handleSeek}  
+                  hitSlop={{ top: 20, bottom: 20, left: 10, right: 10 }} 
+                >
+                  <View 
+                    style={[
+                      styles.progressFill, 
+                      { width: `${progress * 100}%`, backgroundColor: result?.rarity.color_hex }
+                    ]} 
+                    pointerEvents="none" 
+                  />
+                </View>
+                <Text style={styles.progressTime}>{formatTime(duration)}</Text>
               </View>
-              <Text style={styles.progressTime}>{formatTime(duration)}</Text>
-            </View>
+            )}
 
             <TouchableOpacity style={styles.videoClose} onPress={handleCloseVideo}>
               <Text style={styles.videoCloseText}>✕</Text>
@@ -598,6 +659,47 @@ export default function CaseScreen() {
           </Animated.View>
         </View>
       </Modal>
+
+      <Modal visible={pityVisible} transparent animationType="fade" onRequestClose={() => setPityVisible(false)}>
+        <TouchableOpacity style={styles.pityModalBg} activeOpacity={1} onPress={() => setPityVisible(false)}>
+          <View style={styles.pityCard} onStartShouldSetResponder={() => true}>
+            
+            <Text style={styles.pityTitle}>Contraband Guarantee</Text>
+            <Text style={styles.pityDesc}>
+              Every pack you open without pulling a Contraband increases your pity. At 50 packs, your next Contraband is guaranteed.
+            </Text>
+
+            <View style={styles.pityProgressRow}>
+              <Text style={styles.pityCountText}>{currentPity}</Text>
+              
+              {/* The Progress Bar */}
+              <View style={styles.pityTrack}>
+                <View 
+                  style={[
+                    styles.pityFill, 
+                    { 
+                      width: `${Math.min(100, (currentPity / 50) * 100)}%`,
+                      backgroundColor: currentPity >= 35 ? '#E4AE39' : '#e8a020' 
+                    }
+                  ]} 
+                />
+              </View>
+              
+              <Text style={styles.pityCountText}>50</Text>
+            </View>
+
+            {currentPity >= 35 && (
+              <Text style={styles.softPityWarning}>🔥 Soft Pity Active: Drop rates are highly increased!</Text>
+            )}
+
+            <TouchableOpacity style={styles.pityCloseBtn} onPress={() => setPityVisible(false)}>
+              <Text style={styles.pityCloseText}>Close</Text>
+            </TouchableOpacity>
+
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
     </View>
   )
 }
@@ -662,4 +764,50 @@ const styles = StyleSheet.create({
     flex: 1,         // Tells the scroll view to take up all the remaining screen space
     width: '100%',
   },
+
+  // --- OPEN BUTTON STYLES ---
+  openButton: { 
+    flexDirection: 'row', // Aligns the icon and text horizontally
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e8a020', // Or whatever your primary button color is
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    gap: 12, // Creates perfect spacing between the image and text
+    marginTop: 20,
+  },
+  openButtonIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 6, // Gives the mini-icon a sleek, rounded look
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)', // Optional: adds a subtle border to make it pop
+  },
+  openButtonText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  // --- PITY TRACKER STYLES ---
+  pityButtonWrapper: { alignItems: 'center', marginBottom: 16 },
+  pityButton: { backgroundColor: '#1a1a1a', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: '#333' },
+  pityButtonText: { color: '#e8a020', fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
+  
+  pityModalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  pityCard: { width: '100%', backgroundColor: '#111', borderRadius: 16, padding: 24, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
+  pityTitle: { color: '#fff', fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  pityDesc: { color: '#888', fontSize: 13, textAlign: 'center', lineHeight: 18, marginBottom: 24 },
+  
+  pityProgressRow: { flexDirection: 'row', alignItems: 'center', width: '100%', gap: 12, marginBottom: 16 },
+  pityCountText: { color: '#fff', fontSize: 14, fontWeight: '700', width: 24, textAlign: 'center' },
+  pityTrack: { flex: 1, height: 8, backgroundColor: '#222', borderRadius: 4, overflow: 'hidden' },
+  pityFill: { height: '100%', borderRadius: 4 },
+  
+  softPityWarning: { color: '#E4AE39', fontSize: 12, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  
+  pityCloseBtn: { marginTop: 8, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: '#222', borderRadius: 8 },
+  pityCloseText: { color: '#fff', fontSize: 14, fontWeight: '600' },
 })
