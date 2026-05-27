@@ -17,6 +17,23 @@ const TILE_STEP = TILE_WIDTH + TILE_GAP
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 const stripInitialOffset = (SCREEN_WIDTH / 2) - (TILE_WIDTH / 2) - (TILE_GAP / 2) - (TILE_STEP * 4)
 
+function getMysteryTile(col: Collection | null): Video {
+    return {
+      id: 'dummy-contraband-placeholder',
+      title: col?.mystery_title || '★ Rare Special Item',
+      thumbnail_url: col?.mystery_thumbnail_url || 'https://via.placeholder.com/150/E4AE39/000000?text=?',
+      cdn_url: '',
+      rarity_tiers: { 
+        id: 'dummy-rarity-id', 
+        name: 'Contraband', 
+        weight_percent: 0,     
+        color_hex: '#E4AE39', 
+        // 🟢 Change this from 1 to 9999 so it is always the highest number and sorts last!
+        sort_order: 9999 
+      }
+    };
+  }
+
 export default function CaseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
@@ -107,8 +124,15 @@ export default function CaseScreen() {
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) setUserId(data.user.id)
     })
-    fetchCollection()
-    fetchDecoys()
+    
+    // 🟢 Chain the fetches together
+    async function loadData() {
+      const colData = await fetchCollection()
+      if (colData) {
+        fetchDecoys(colData)
+      }
+    }
+    loadData()
   }, [id])
 
   // Video progress tracking
@@ -166,12 +190,18 @@ export default function CaseScreen() {
   async function fetchCollection() {
     const { data } = await supabase
       .from('collection')
-      .select('id, name, description, cover_image_url, videos(count)')
+      // 🟢 Added mystery_title and mystery_thumbnail_url to the select
+      .select('id, name, description, cover_image_url, mystery_title, mystery_thumbnail_url, videos(count)')
       .eq('id', id).single()
-    if (data) setCollection(data as unknown as Collection)
+      
+    if (data) {
+      setCollection(data as unknown as Collection)
+      return data as unknown as Collection // 🟢 Return it so fetchDecoys can use it
+    }
+    return null
   }
 
-  async function fetchDecoys() {
+  async function fetchDecoys(currentCollection: Collection) {
     const { data } = await supabase
       .from('videos')
       .select('id, title, thumbnail_url, rarity_tiers(name, color_hex, sort_order)')
@@ -181,11 +211,23 @@ export default function CaseScreen() {
 
     if (data) {
       const fetchedVideos = data as unknown as Video[]
-      const sortedVideos = fetchedVideos.sort((a, b) => {
+      
+      // 🟢 1. Hide all the real Contraband videos from the wheel
+      const standardVideos = fetchedVideos.filter(
+        v => v.rarity_tiers?.name.toLowerCase() !== 'contraband'
+      )
+      
+      // 🟢 2. Generate the custom dummy tile and put it in the list
+      const dynamicDummy = getMysteryTile(currentCollection);
+      const displayVideos = [...standardVideos, dynamicDummy]
+
+      // 🟢 3. Sort them exactly as before
+      const sortedVideos = displayVideos.sort((a, b) => {
         const orderA = a.rarity_tiers?.sort_order ?? 999
         const orderB = b.rarity_tiers?.sort_order ?? 999
         return orderA - orderB
       })
+
       setDecoys(sortedVideos)
       const filledStrip = Array.from({ length: TILE_COUNT }).map((_, index) =>
         sortedVideos[index % sortedVideos.length]
@@ -236,10 +278,16 @@ export default function CaseScreen() {
       const winningIndex = tilesToScroll + 4
 
       const finalStrip = [...initialStrip]
-      finalStrip[winningIndex] = {
-        ...drop,
-        rarity_tiers: drop.rarity
-      } as unknown as Video
+      
+      // 🟢 THE ILLUSION: Put the fake tile on the wheel if they won a Contraband
+      if (drop.rarity.name.toLowerCase() === 'contraband') {
+        finalStrip[winningIndex] = getMysteryTile(collection);
+      } else {
+        finalStrip[winningIndex] = {
+          ...drop,
+          rarity_tiers: drop.rarity
+        } as unknown as Video
+      }
 
       setPaddedTiles(finalStrip)
 
@@ -380,7 +428,17 @@ export default function CaseScreen() {
                   resizeMode="cover"
                 />
                 <View style={[styles.gridRarityBar, { backgroundColor: v.rarity_tiers?.color_hex ?? '#6496C8' }]} />
-                <Text style={styles.gridThumbLabel} numberOfLines={1}>{v.title}</Text>
+                
+                {/* 🟢 Update this Text component: */}
+                <Text 
+                  style={styles.gridThumbLabel} 
+                  numberOfLines={2}               // Allows it to drop to the next line
+                  adjustsFontSizeToFit={true}     // Automatically shrinks the text if it's too long
+                  minimumFontScale={0.7}          // Prevents it from shrinking so small it becomes unreadable
+                >
+                  {v.title}
+                </Text>
+
               </View>
             ))}
           </View>
@@ -518,7 +576,7 @@ const styles = StyleSheet.create({
   videoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 32, gap: 29, justifyContent: 'center', marginTop: 20 },
   gridThumbWrapper: { width: 60 },
   gridThumb: { width: 60, height: 70, borderRadius: 4, backgroundColor: '#1a1a1a' },
-  gridRarityBar: { width: 60, height: 4, marginTop: -4, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
+  gridRarityBar: { width: 60, height: 5, marginTop: -5, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
   gridThumbLabel: { color: '#fff', fontSize: 9, marginTop: 6, textAlign: 'left', fontWeight: 'bold' },
   revealCard: { position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: '#1a1a1a', borderRadius: 16, borderWidth: 1.5, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
   revealThumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: '#1a1a1a' },

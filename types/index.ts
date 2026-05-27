@@ -11,6 +11,8 @@ export type Collection = {
   name: string
   description: string
   cover_image_url: string
+  mystery_title?: string         // 🟢 NEW
+  mystery_thumbnail_url?: string // 🟢 NEW
   is_active: boolean
   videos: { count: number }[]
 }
