@@ -1,5 +1,17 @@
 import { useEffect, useState, useRef } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Easing, Alert, Dimensions, Modal, Image } from 'react-native'
+import { Image } from 'expo-image'
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  Animated, 
+  Dimensions, 
+  Easing, 
+  Alert, 
+  Modal,
+  ScrollView 
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
 import { Audio } from 'expo-av'
@@ -26,13 +38,30 @@ function getMysteryTile(col: Collection | null): Video {
       rarity_tiers: { 
         id: 'dummy-rarity-id', 
         name: 'Contraband', 
-        weight_percent: 0,     
+        weight_percent: 0.26,     
         color_hex: '#E4AE39', 
         // 🟢 Change this from 1 to 9999 so it is always the highest number and sorts last!
         sort_order: 9999 
       }
     };
   }
+
+// 🟢 The Weighted Random Picker
+function getWeightedRandomVideo(videos: Video[]) {
+  // Add up the total weight pool
+  const totalWeight = videos.reduce((sum, v) => sum + (v.rarity_tiers?.weight_percent || 10), 0);
+  let random = Math.random() * totalWeight;
+
+  // Pick an item based on where the random number landed
+  for (const video of videos) {
+    const weight = video.rarity_tiers?.weight_percent || 10;
+    if (random < weight) {
+      return video;
+    }
+    random -= weight;
+  }
+  return videos[0]; // Fallback
+}
 
 export default function CaseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -204,7 +233,7 @@ export default function CaseScreen() {
   async function fetchDecoys(currentCollection: Collection) {
     const { data } = await supabase
       .from('videos')
-      .select('id, title, thumbnail_url, rarity_tiers(name, color_hex, sort_order)')
+      .select('id, title, thumbnail_url, rarity_tiers(id, name, color_hex, sort_order, weight_percent)')
       .eq('collection_id', id)
       .eq('is_active', true)
       .limit(30)
@@ -229,8 +258,8 @@ export default function CaseScreen() {
       })
 
       setDecoys(sortedVideos)
-      const filledStrip = Array.from({ length: TILE_COUNT }).map((_, index) =>
-        sortedVideos[index % sortedVideos.length]
+      const filledStrip = Array.from({ length: TILE_COUNT }).map(() =>
+        getWeightedRandomVideo(displayVideos)
       )
       setPaddedTiles(filledStrip)
     }
@@ -244,22 +273,32 @@ export default function CaseScreen() {
       openingSound.current.playAsync().catch(() => {})
     }
 
+    // 🟢 1.5 Second Tension Animation
     Animated.parallel([
-      Animated.timing(caseOpacity, { toValue: 0, duration: 500, useNativeDriver: true }),
+      // Fade out only at the very end
       Animated.sequence([
-        Animated.timing(caseScale, { toValue: 1.15, duration: 150, useNativeDriver: true }),
-        Animated.timing(caseScale, { toValue: 0, duration: 350, easing: Easing.in(Easing.back(2)), useNativeDriver: true })
+        Animated.delay(1200), // Wait 1.2 seconds before fading
+        Animated.timing(caseOpacity, { toValue: 0, duration: 300, useNativeDriver: true })
+      ]),
+      // Scale up slowly to build suspense, then pop
+      Animated.sequence([
+        Animated.timing(caseScale, { 
+          toValue: 1.3,           // Swell up larger 
+          duration: 1200,         // Do it slowly over 1.2s
+          easing: Easing.out(Easing.quad), 
+          useNativeDriver: true 
+        }),
+        Animated.timing(caseScale, { 
+          toValue: 0, 
+          duration: 300,          // Snap to 0 in the last 0.3s
+          easing: Easing.in(Easing.back(2)), 
+          useNativeDriver: true 
+        })
       ])
     ]).start()
 
-    const shuffledDecoys = [...decoys]
-    for (let i = shuffledDecoys.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffledDecoys[i], shuffledDecoys[j]] = [shuffledDecoys[j], shuffledDecoys[i]]
-    }
-
-    const initialStrip = Array.from({ length: TILE_COUNT }).map((_, index) =>
-      shuffledDecoys[index % shuffledDecoys.length]
+    const initialStrip = Array.from({ length: TILE_COUNT }).map(() =>
+      getWeightedRandomVideo(decoys)
     )
 
     try {
@@ -414,34 +453,42 @@ export default function CaseScreen() {
               <Image
                 source={require('../../../assets/smiley.png')}
                 style={[styles.caseIcon, { opacity: soundsReady ? 1 : 0.4 }]}
-                resizeMode="contain"
+                contentFit="contain"
+                transition={200}
               />
             </TouchableOpacity>
           </Animated.View>
 
-          <View style={styles.videoGrid}>
-            {decoys.slice(0, 8).map((v, i) => (
+          {/* 🟢 1. The Thin Separator Line */}
+          <View style={styles.dropPoolLine} />
+          
+          {/* 🟢 2. The Scrollable Drop Pool */}
+          <ScrollView 
+            style={styles.dropPoolScroll} 
+            contentContainerStyle={styles.videoGrid}
+            showsVerticalScrollIndicator={false} // Hides the ugly scrollbar
+          >
+            {/* 🟢 3. Removed .slice(0, 8) so the entire pool is mapped! */}
+            {decoys.map((v, i) => (
               <View key={i} style={styles.gridThumbWrapper}>
                 <Image
                   source={{ uri: v.thumbnail_url }}
                   style={styles.gridThumb}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  transition={200}
                 />
                 <View style={[styles.gridRarityBar, { backgroundColor: v.rarity_tiers?.color_hex ?? '#6496C8' }]} />
-                
-                {/* 🟢 Update this Text component: */}
                 <Text 
                   style={styles.gridThumbLabel} 
-                  numberOfLines={2}               // Allows it to drop to the next line
-                  adjustsFontSizeToFit={true}     // Automatically shrinks the text if it's too long
-                  minimumFontScale={0.7}          // Prevents it from shrinking so small it becomes unreadable
+                  numberOfLines={2}               
+                  adjustsFontSizeToFit={true}     
+                  minimumFontScale={0.7}          
                 >
                   {v.title}
                 </Text>
-
               </View>
             ))}
-          </View>
+          </ScrollView>
         </>
       ) : (
         <View style={styles.caseContainer}>
@@ -461,7 +508,7 @@ export default function CaseScreen() {
                   <Image
                     source={{ uri: v?.thumbnail_url }}
                     style={styles.rollThumb}
-                    resizeMode="cover"
+                    contentFit="cover"
                   />
                   <View style={[styles.rollRarityBar, { backgroundColor: v?.rarity_tiers?.color_hex ?? '#333' }]} />
                 </View>
@@ -485,7 +532,8 @@ export default function CaseScreen() {
           <Image
             source={{ uri: result.thumbnail_url }}
             style={styles.revealThumb}
-            resizeMode="cover"
+            contentFit="cover"
+            transition={300}
           />
           <View style={styles.revealInfo}>
             <Text style={[styles.revealRarity, { color: result.rarity.color_hex }]}>
@@ -603,4 +651,15 @@ const styles = StyleSheet.create({
   progressTime: { color: '#666', fontSize: 10, minWidth: 32, textAlign: 'center' },
   videoClose: { position: 'absolute', top: 12, left: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
   videoCloseText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  dropPoolLine: {
+    height: 1,
+    backgroundColor: '#333', // A subtle, thin gray line
+    width: '85%',            // Leaves a nice margin on the left and right edges
+    alignSelf: 'center',
+    marginBottom: 0,
+  },
+  dropPoolScroll: {
+    flex: 1,         // Tells the scroll view to take up all the remaining screen space
+    width: '100%',
+  },
 })

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Image, Dimensions, ScrollView } from 'react-native'
 import { useRouter } from 'expo-router'
-import { supabase } from '../../lib/supabase'
-import { Collection } from '../../types'
+import { supabase } from '../../../lib/supabase'
+import { Collection } from '../../../types'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 
@@ -45,13 +45,13 @@ export default function CollectionsScreen() {
             key={item.id} 
             style={styles.card}
             activeOpacity={0.8}
-            onPress={() => router.push(`/case/${item.id}`)}
+            onPress={() => router.push(`/packs/${item.id}`)}
           >
             {/* Case Image Container */}
             <View style={styles.imageContainer}>
               <Image 
                 // Using smiley as a fallback if the DB doesn't have a cover_image_url yet
-                source={item.cover_image_url ? { uri: item.cover_image_url } : require('../../assets/smiley.png')} 
+                source={item.cover_image_url ? { uri: item.cover_image_url } : require('../../../assets/smiley.png')} 
                 style={styles.caseImage} 
                 resizeMode="contain" 
               />

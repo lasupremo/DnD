@@ -15,13 +15,12 @@ export default function AppLayout() {
         },
       }}
     >
-      {/* 1. Cases (Mapped to collections.tsx) */}
+      {/* 🟢 1. Point to the 'packs' folder and update the labels */}
       <Tabs.Screen 
-        name="collections" 
+        name="packs" 
         options={{ 
-          title: 'Cases', 
-          tabBarLabel: 'Cases',
-          // tabBarIcon: ({ color }) => <YourIcon name="box" color={color} />
+          title: 'Packs', 
+          tabBarLabel: 'Packs',
         }} 
       />
 
@@ -43,11 +42,6 @@ export default function AppLayout() {
         }} 
       />
     {/* 🔴 HIDDEN SCREENS (Still navigable, but no tab icon) */}
-      
-      <Tabs.Screen 
-        name="case/[id]" 
-        options={{ href: null }} // This completely hides it from the bottom bar
-      />
       
       <Tabs.Screen 
         name="history" 
