@@ -15,7 +15,6 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
 import { useAudioPlayer } from 'expo-audio'
-import * as Haptics from 'expo-haptics'
 import { supabase } from '../../../lib/supabase'
 import { openCase } from '../../../lib/roll'
 import { Collection, DropResult, Video } from '../../../types'
@@ -59,6 +58,15 @@ function getWeightedRandomVideo(videos: Video[]) {
   return videos[0]; 
 }
 
+function getBitsStyle(amount: number) {
+  if (amount >= 100000) return { color: '#FFBB23', icon: require('../../../assets/bits/tier06.png') }
+  if (amount >= 10000) return { color: '#FF4A58', icon: require('../../../assets/bits/tier05.png') }
+  if (amount >= 5000) return { color: '#4877FF', icon: require('../../../assets/bits/tier04.png') }
+  if (amount >= 1000) return { color: '#01F7D9', icon: require('../../../assets/bits/tier03.png') }
+  if (amount >= 100) return { color: '#BD63FF', icon: require('../../../assets/bits/tier02.png') }
+  return { color: '#A1A1A1', icon: require('../../../assets/bits/tier01.png') }
+}
+
 export default function CaseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
@@ -75,6 +83,8 @@ export default function CaseScreen() {
   const [duration, setDuration] = useState(0)
   const [soundsReady, setSoundsReady] = useState(false)
   const [trackWidth, setTrackWidth] = useState(0)
+
+  const [balance, setBalance] = useState<number>(0)
 
   const [pityVisible, setPityVisible] = useState(false)
   const [currentPity, setCurrentPity] = useState(0)
@@ -137,19 +147,31 @@ export default function CaseScreen() {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         setUserId(user.id)
-        const { data: userData } = await supabase
-          .from('users')
-          .select('image_pity') 
-          .eq('id', user.id)
-          .single()
-        
-        if (userData) {
-          setCurrentPity(userData.image_pity || 0)
-        }
+        // 🟢 Fetch their current Bits
+        const { data: uData } = await supabase.from('users').select('balance').eq('id', user.id).single()
+        if (uData) setBalance(uData.balance || 0)
       }
 
       const colData = await fetchCollection()
+      
       if (colData) {
+        // 🟢 Fetch the pity specifically for THIS user on THIS collection
+        if (user) {
+          const { data: pityData, error } = await supabase
+            .from('user_collection_pity')
+            .select('pity_count') 
+            .eq('user_id', user.id)
+            .eq('collection_id', id)
+            .single()
+          
+          if (pityData && !error) {
+            setCurrentPity(pityData.pity_count)
+          } else {
+            // If they have never opened this specific pack before, it defaults to 0!
+            setCurrentPity(0)
+          }
+        }
+
         fetchDecoys(colData)
       }
     }
@@ -222,7 +244,7 @@ export default function CaseScreen() {
   async function fetchCollection() {
     const { data } = await supabase
       .from('collection')
-      .select('id, name, description, cover_image_url, mystery_title, mystery_thumbnail_url, type, videos(count)')
+      .select('id, name, description, cover_image_url, mystery_title, mystery_thumbnail_url, type, price, videos(count)')
       .eq('id', id).single()
       
     if (data) {
@@ -433,21 +455,38 @@ export default function CaseScreen() {
   const revealOpacity = revealAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] })
   const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
 
+  const packPrice = collection?.price || 500;
+  const packBitsStyle = getBitsStyle(packPrice);
+  const canAfford = balance >= packPrice;
+
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-        <Text style={styles.backText}>← Back</Text>
-      </TouchableOpacity>
 
       <Text style={styles.pressLabel}>Press to Open</Text>
       <Text style={styles.subLabel}>
         Open <Text style={styles.subLabelBold}>{collection?.name}</Text> pack
       </Text>
 
+      <View style={styles.costContainer}>
+        <Text style={styles.costLabel}>Cost: </Text>
+        <Image source={packBitsStyle.icon} style={styles.costIcon} contentFit="contain" />
+        <Text style={[
+          styles.costValue, 
+          { color: packBitsStyle.color },
+          !canAfford && { opacity: 0.5 }
+        ]}>
+          {packPrice.toLocaleString()}
+        </Text>
+      </View>
+
       {phase === 'idle' ? (
         <>
           <Animated.View style={[styles.caseIconWrapper, { opacity: caseOpacity, transform: [{ rotate: spin }, { scale: caseScale }] }]}>
-            <TouchableOpacity onPress={handleOpen} activeOpacity={0.85} disabled={!soundsReady || phase !== 'idle'}>
+            <TouchableOpacity 
+              onPress={handleOpen} 
+              activeOpacity={0.85} 
+              disabled={!soundsReady || phase !== 'idle' || balance < (collection?.price || 500)}
+            >
               {collection?.cover_image_url ? (
                 <Image
                   source={{ uri: collection.cover_image_url }}
@@ -474,7 +513,16 @@ export default function CaseScreen() {
               <View key={i} style={styles.gridThumbWrapper}>
                 <Image source={{ uri: v.thumbnail_url }} style={styles.gridThumb} contentFit="cover" transition={200} />
                 <View style={[styles.gridRarityBar, { backgroundColor: v.rarity_tiers?.color_hex ?? '#6496C8' }]} />
-                <Text style={styles.gridThumbLabel} numberOfLines={2} adjustsFontSizeToFit={true} minimumFontScale={0.7}>{v.title}</Text>
+                
+                <Text 
+                style={styles.gridThumbLabel} 
+                numberOfLines={1} 
+                adjustsFontSizeToFit={true} 
+                minimumFontScale={0.4}
+                >
+                  {v.title}
+                </Text>
+
               </View>
             ))}
           </ScrollView>
@@ -612,28 +660,34 @@ export default function CaseScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F0F0F', paddingTop: 56 },
+  container: { flex: 1, backgroundColor: '#0F0F0F', paddingTop: 16 },
   backBtn: { paddingHorizontal: 20, marginBottom: 40 },
   backText: { color: '#888', fontSize: 14 },
   pressLabel: { fontSize: 22, fontWeight: '700', color: '#fff', textAlign: 'center' },
   subLabel: { fontSize: 13, color: '#A0A0A0', textAlign: 'center', marginTop: 4, marginBottom: 0 },
   subLabelBold: { color: '#fff', fontWeight: '600' },
+
+  costContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 12, gap: 6 },
+  costLabel: { fontSize: 13, color: '#A0A0A0', fontWeight: '600' },
+  costIcon: { width: 14, height: 14 },
+  costValue: { fontSize: 14, fontWeight: '800' },
+
   caseIconWrapper: { alignSelf: 'center', width: 231, height: 231, marginTop: 40, marginBottom: 40, zIndex: 20 },
   caseIcon: { width: '100%', height: '100%' },
   caseContainer: { width: '100%', height: 140, backgroundColor: '#141414', borderTopWidth: 2, borderBottomWidth: 2, borderColor: '#2a2a2a', justifyContent: 'center', alignItems: 'center', marginVertical: 40, overflow: 'hidden' },
   stripClip: { width: '100%', height: 100, justifyContent: 'center' },
   strip: { flexDirection: 'row', alignItems: 'center', position: 'absolute', width: TILE_COUNT * TILE_STEP },
   tile: { width: TILE_WIDTH, marginHorizontal: TILE_GAP / 2 },
-  rollThumb: { width: TILE_WIDTH, height: 80, borderRadius: 4, backgroundColor: '#1a1a1a' },
-  rollRarityBar: { width: TILE_WIDTH, height: 4, marginTop: -4, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
+  rollThumb: { width: TILE_WIDTH, height: 80, borderTopLeftRadius: 4, borderTopRightRadius: 4, backgroundColor: '#1a1a1a' },
+  rollRarityBar: { width: TILE_WIDTH, height: 4, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
   fadeLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' },
   fadeRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 40, backgroundColor: 'rgba(15,15,15,0.7)' },
   indicatorTop: { position: 'absolute', top: 0, left: '50%', marginLeft: -12, width: 0, height: 0, borderLeftWidth: 12, borderRightWidth: 12, borderTopWidth: 16, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#e8a020', zIndex: 10 },
   indicatorBottom: { position: 'absolute', bottom: 0, left: '50%', marginLeft: -12, width: 0, height: 0, borderLeftWidth: 12, borderRightWidth: 12, borderBottomWidth: 16, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#e8a020', zIndex: 10 },
   videoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 32, gap: 29, justifyContent: 'center', marginTop: 20 },
   gridThumbWrapper: { width: 60 },
-  gridThumb: { width: 60, height: 70, borderRadius: 4, backgroundColor: '#1a1a1a' },
-  gridRarityBar: { width: 60, height: 5, marginTop: -5, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
+  gridThumb: { width: 60, height: 60, backgroundColor: '#1a1a1a' },
+  gridRarityBar: { width: 60, height: 5 },
   gridThumbLabel: { color: '#fff', fontSize: 9, marginTop: 6, textAlign: 'left', fontWeight: 'bold' },
   revealCard: { position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: '#1a1a1a', borderRadius: 16, borderWidth: 1.5, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
   revealThumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: '#1a1a1a' },

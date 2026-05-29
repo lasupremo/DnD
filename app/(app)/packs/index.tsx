@@ -71,11 +71,11 @@ export default function CollectionsScreen() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#0F0F0F' // Base background from your SVG
+    backgroundColor: '#0F0F0F' 
   },
   content: { 
     padding: PADDING, 
-    paddingTop: 64, 
+    paddingTop: 16, // 🟢 FIX: Lowered from 64 to 16 to account for global header
     paddingBottom: 100 
   },
   headerTitle: { 
@@ -103,7 +103,6 @@ const styles = StyleSheet.create({
   imageContainer: { 
     width: ITEM_WIDTH, 
     height: ITEM_WIDTH, 
-    // Removed backgroundColor, borderRadius, borderWidth, borderColor, and padding
     justifyContent: 'center', 
     alignItems: 'center', 
     marginBottom: 12, 

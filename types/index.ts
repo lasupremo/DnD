@@ -14,6 +14,7 @@ export type Collection = {
   mystery_title?: string
   mystery_thumbnail_url?: string
   type?: string
+  price: number;
   is_active: boolean
   videos: { count: number }[]
 }
