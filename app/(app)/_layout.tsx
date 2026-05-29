@@ -73,7 +73,7 @@ export default function AppLayout() {
 
       {/* Tab 2: Vault (Formerly Inventory) */}
       <Tabs.Screen 
-        name="inventory" 
+        name="vault" 
         options={{ title: 'Vault', tabBarLabel: 'Vault' }} 
       />
 
