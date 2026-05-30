@@ -10,7 +10,8 @@ import {
   Easing, 
   Alert, 
   Modal,
-  ScrollView 
+  ScrollView,
+  ActivityIndicator 
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
@@ -71,6 +72,8 @@ function getBitsStyle(amount: number) {
 export default function CaseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
+
+  const [loading, setLoading] = useState(true)
 
   const [collection, setCollection] = useState<Collection | null>(null)
   const [decoys, setDecoys] = useState<Video[]>([])
@@ -145,6 +148,7 @@ export default function CaseScreen() {
     setPaddedTiles([])
 
     async function initUserAndData() {
+      setLoading(true) // 🟢 Start loading
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         setUserId(user.id)
@@ -175,6 +179,8 @@ export default function CaseScreen() {
 
         fetchDecoys(colData)
       }
+
+      setLoading(false) // 🟢 Everything is ready, stop loading!
     }
     
     initUserAndData()
@@ -459,6 +465,15 @@ export default function CaseScreen() {
   const packPrice = collection?.price || 500;
   const packBitsStyle = getBitsStyle(packPrice);
   const canAfford = balance >= packPrice;
+
+  // 🟢 NEW: Show a centered loading spinner if data isn't ready yet
+  if (loading || !collection) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#e8a020" />
+      </View>
+    )
+  }
 
   return (
     <View style={styles.container}>

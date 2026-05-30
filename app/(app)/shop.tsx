@@ -5,14 +5,15 @@ import {
   StyleSheet, 
   ScrollView, 
   TouchableOpacity, 
-  ActivityIndicator 
+  ActivityIndicator,
+  Alert // 🟢 Add Alert here
 } from 'react-native'
 import { Image } from 'expo-image'
 import { useFocusEffect, useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
 import { Collection } from '../../types'
 
-type ShopCollection = Collection & { price: number }
+type ShopCollection = Collection & { price: number; isUnlocked?: boolean }
 
 // We keep this to style the pack prices!
 function getBitsStyle(amount: number) {
@@ -40,28 +41,101 @@ export default function ShopScreen() {
     setLoading(true)
     
     const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      const { data: userData } = await supabase
-        .from('users')
-        .select('balance')
-        .eq('id', user.id)
-        .single()
-      
-      if (userData) setBalance(userData.balance || 0)
+    if (!user) {
+      setLoading(false)
+      return
     }
 
-    const { data: colData, error } = await supabase
+    // Get balance
+    const { data: userData } = await supabase
+      .from('users')
+      .select('balance')
+      .eq('id', user.id)
+      .single()
+    
+    if (userData) setBalance(userData.balance || 0)
+
+    // Fetch ALL active collections
+    const { data: allPacks, error } = await supabase
       .from('collection')
       .select('*')
       .eq('is_active', true)
       .order('created_at', { ascending: false })
 
-    if (colData && !error) {
-      setCollections(colData as ShopCollection[])
+    // Fetch IDs of packs the user ALREADY unlocked
+    const { data: unlocked } = await supabase
+      .from('user_unlocked_packs')
+      .select('collection_id')
+      .eq('user_id', user.id)
+    
+    const unlockedIds = unlocked?.map(u => u.collection_id) || []
+
+    // Filter the shop to ONLY show locked packs
+    if (allPacks && !error) {
+      // 🟢 1. Keep all packs, but flag them if they are in the unlocked array
+      const processedPacks = allPacks.map(pack => ({
+        ...pack,
+        isUnlocked: unlockedIds.includes(pack.id)
+      }))
+      
+      // 🟢 2. Sort them: locked packs at the top, unlocked packs at the bottom
+      processedPacks.sort((a, b) => {
+        if (a.isUnlocked === b.isUnlocked) return 0 
+        return a.isUnlocked ? 1 : -1 
+      })
+
+      setCollections(processedPacks as ShopCollection[])
     }
     
     setLoading(false)
   }
+
+  const handleUnlockPress = (pack: ShopCollection) => {
+    // Note: Ensure your database collection table has 'unlock_price' added, 
+    // or fallback to pack.price if you haven't run the SQL yet.
+    const unlockCost = (pack as any).unlock_price || pack.price || 2000
+
+    Alert.alert(
+      "Unlock Pack",
+      `Do you want to permanently unlock the ${pack.name} pack for ${unlockCost.toLocaleString()} bits?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Unlock", 
+          style: "default",
+          onPress: () => processUnlock(pack, unlockCost) 
+        }
+      ]
+    );
+  };
+
+  const processUnlock = async (pack: ShopCollection, unlockCost: number) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data, error } = await supabase.functions.invoke('unlock_pack', {
+        body: { user_id: user.id, collection_id: pack.id }
+      });
+
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Failed to unlock');
+
+      Alert.alert("Success!", `${pack.name} has been unlocked and added to your Collections.`);
+      
+      // 🟢 Flag as unlocked and push to the bottom instantly
+      setCollections(prev => {
+        const updated = prev.map(p => p.id === pack.id ? { ...p, isUnlocked: true } : p);
+        return updated.sort((a, b) => {
+          if (a.isUnlocked === b.isUnlocked) return 0;
+          return a.isUnlocked ? 1 : -1;
+        });
+      });
+      setBalance(prev => prev - unlockCost);
+      
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -75,17 +149,22 @@ export default function ShopScreen() {
       ) : (
         <ScrollView style={styles.scrollArea} contentContainerStyle={styles.grid}>
           {collections.map((pack) => {
-            const packPrice = pack.price || 500
+            const packPrice = (pack as any).unlock_price || 2000 
             const canAfford = balance >= packPrice
+            const isUnlocked = pack.isUnlocked // 🟢 Grab the flag
             
             const packBitsStyle = getBitsStyle(packPrice)
             
             return (
               <TouchableOpacity 
                 key={pack.id} 
-                style={[styles.packCard, !canAfford && { opacity: 0.5 }]} 
-                activeOpacity={0.8}
-                onPress={() => router.push(`/packs/${pack.id}`)}
+                // 🟢 Lower opacity if they can't afford it OR if they already unlocked it
+                style={[styles.packCard, (!canAfford || isUnlocked) && { opacity: 0.5 }]} 
+                activeOpacity={isUnlocked ? 1 : 0.8} // 🟢 Disable press animation if unlocked
+                disabled={isUnlocked} // 🟢 Completely disable the button if unlocked
+                onPress={() => {
+                  if (!isUnlocked) handleUnlockPress(pack)
+                }}
               >
                 <View style={styles.imageContainer}>
                   {pack.cover_image_url ? (
@@ -106,12 +185,19 @@ export default function ShopScreen() {
                     </Text>
                   </View>
                   
-                  <View style={styles.priceRow}>
-                    <Image source={packBitsStyle.icon} style={styles.packBitsIcon} contentFit="contain" />
-                    <Text style={[styles.priceText, { color: packBitsStyle.color }]}>
-                      {packPrice.toLocaleString()}
-                    </Text>
-                  </View>
+                  {/* 🟢 NEW: Swap price for 'ALREADY OWNED' badge if unlocked */}
+                  {isUnlocked ? (
+                    <View style={styles.ownedRow}>
+                      <Text style={styles.ownedText}>ALREADY OWNED</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.priceRow}>
+                      <Image source={packBitsStyle.icon} style={styles.packBitsIcon} contentFit="contain" />
+                      <Text style={[styles.priceText, { color: packBitsStyle.color }]}>
+                        {packPrice.toLocaleString()}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               </TouchableOpacity>
             )
@@ -197,5 +283,9 @@ const styles = StyleSheet.create({
   priceText: {
     fontWeight: '800',
     fontSize: 14
-  }
+  },
+
+  // 🟢 NEW: Styles for the owned badge
+  ownedRow: { marginTop: 8, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: '#222', borderRadius: 6, alignSelf: 'flex-start' },
+  ownedText: { color: '#888', fontSize: 10, fontWeight: '800', letterSpacing: 1 },
 })

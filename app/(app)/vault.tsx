@@ -1,14 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  ActivityIndicator,
-  Modal,
-  Alert
-} from 'react-native'
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, Alert, DeviceEventEmitter } from 'react-native'
 import { Image } from 'expo-image'
 import { useFocusEffect } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
@@ -185,6 +176,9 @@ export default function VaultScreen() {
       setIsSelling(false)
       return
     }
+
+    // 🟢 NEW: Tell the global header to update instantly!
+    DeviceEventEmitter.emit('balanceUpdated', data.new_balance)
     
     setItems(prevItems => 
       prevItems.map(item => 

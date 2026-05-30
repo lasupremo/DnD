@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router'
-import { View, Text, StyleSheet } from 'react-native'
+import { View, Text, StyleSheet, DeviceEventEmitter } from 'react-native'
 import { Image } from 'expo-image'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useFocusEffect } from 'expo-router'
 import { supabase } from '../../lib/supabase'
 
@@ -20,18 +20,27 @@ function getBitsStyle(amount: number) {
 function GlobalBalanceBadge() {
   const [balance, setBalance] = useState(0)
 
-  useFocusEffect(
-    useCallback(() => {
-      async function fetchBalance() {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          const { data } = await supabase.from('users').select('balance').eq('id', user.id).single()
-          if (data) setBalance(data.balance || 0)
-        }
+  const fetchBalance = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const { data } = await supabase.from('users').select('balance').eq('id', user.id).single()
+      if (data) setBalance(data.balance || 0)
+    }
+  }
+
+  useFocusEffect(useCallback(() => { fetchBalance() }, []))
+
+  // 🟢 NEW: Listen for the custom "balanceUpdated" event globally!
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('balanceUpdated', (newBalance) => {
+      if (typeof newBalance === 'number') {
+        setBalance(newBalance) // Instantly updates!
+      } else {
+        fetchBalance() // Fallback fetch
       }
-      fetchBalance()
-    }, [])
-  )
+    })
+    return () => subscription.remove()
+  }, [])
 
   const currentBitsStyle = getBitsStyle(balance)
 

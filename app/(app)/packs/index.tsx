@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Image, Dimensions, ScrollView } from 'react-native'
-import { useRouter } from 'expo-router'
+import { useState, useCallback } from 'react'
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, ActivityIndicator } from 'react-native' // 🟢 Image removed
+import { useRouter, useFocusEffect } from 'expo-router'
+import { Image } from 'expo-image'
 import { supabase } from '../../../lib/supabase'
 import { Collection } from '../../../types'
 
@@ -14,56 +15,73 @@ const ITEM_WIDTH = (SCREEN_WIDTH - (PADDING * 2) - COLUMN_GAP) / 2
 export default function CollectionsScreen() {
   const router = useRouter()
   const [collections, setCollections] = useState<Collection[]>([])
+  const [loading, setLoading] = useState(true) // 🟢 NEW Loading state
 
-  useEffect(() => {
-    fetchCollections()
-  }, [])
+  useFocusEffect(
+    useCallback(() => {
+      fetchCollections()
+    }, [])
+  )
 
   async function fetchCollections() {
-    // Dynamically fetch all active collections
-    const { data } = await supabase
+    setLoading(true) // 🟢 Start loading
+    
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: allPacks } = await supabase
       .from('collection')
       .select('id, name, description, cover_image_url')
       .eq('is_active', true)
       .order('created_at', { ascending: false })
     
-    if (data) {
-      setCollections(data as unknown as Collection[])
+    const { data: unlocked } = await supabase
+      .from('user_unlocked_packs')
+      .select('collection_id')
+      .eq('user_id', user.id)
+    
+    const unlockedIds = unlocked?.map(u => u.collection_id) || []
+
+    if (allPacks) {
+      const myPacks = allPacks.filter(pack => unlockedIds.includes(pack.id))
+      setCollections(myPacks as unknown as Collection[])
     }
+    
+    setLoading(false) // 🟢 End loading
   }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header */}
       <Text style={styles.headerTitle}>Collections</Text>
-      <Text style={styles.subTitle}>Select a case to open</Text>
+      <Text style={styles.subTitle}>Select a pack to open</Text>
 
-      {/* Grid */}
-      <View style={styles.grid}>
-        {collections.map((item) => (
-          <TouchableOpacity 
-            key={item.id} 
-            style={styles.card}
-            activeOpacity={0.8}
-            onPress={() => router.push(`/packs/${item.id}`)}
-          >
-            {/* Case Image Container */}
-            <View style={styles.imageContainer}>
-              <Image 
-                // Using smiley as a fallback if the DB doesn't have a cover_image_url yet
-                source={item.cover_image_url ? { uri: item.cover_image_url } : require('../../../assets/smiley.png')} 
-                style={styles.caseImage} 
-                resizeMode="contain" 
-              />
-            </View>
-            
-            {/* Case Name */}
-            <Text style={styles.caseName} numberOfLines={1}>
-              {item.name}
-            </Text>
+      {/* Grid / Empty State */}
+      {loading ? (
+        <ActivityIndicator size="large" color="#e8a020" style={{ marginTop: 40 }} />
+      ) : collections.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>You haven't unlocked any packs yet.</Text>
+          <TouchableOpacity style={styles.shopBtn} onPress={() => router.push('/shop')} activeOpacity={0.8}>
+            <Text style={styles.shopBtnText}>Visit the Shop</Text>
           </TouchableOpacity>
-        ))}
-      </View>
+        </View>
+      ) : (
+        <View style={styles.grid}>
+          {collections.map((item) => (
+            <TouchableOpacity 
+              key={item.id} 
+              style={styles.card}
+              activeOpacity={0.8}
+              onPress={() => router.push(`/packs/${item.id}`)}
+            >
+              <View style={styles.imageContainer}>
+                <Image source={item.cover_image_url ? { uri: item.cover_image_url } : require('../../../assets/smiley.png')} style={styles.caseImage} contentFit="contain" />
+              </View>
+              <Text style={styles.caseName} numberOfLines={1}>{item.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </ScrollView>
   )
 }
@@ -117,4 +135,9 @@ const styles = StyleSheet.create({
     fontWeight: '600', 
     textAlign: 'center' 
   },
+
+  emptyContainer: { alignItems: 'center', marginTop: 60 },
+  emptyText: { color: '#888', fontSize: 15, marginBottom: 20 },
+  shopBtn: { backgroundColor: '#e8a020', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
+  shopBtnText: { color: '#000', fontWeight: '800', fontSize: 14 },
 })
