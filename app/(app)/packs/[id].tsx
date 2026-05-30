@@ -18,6 +18,7 @@ import { useAudioPlayer } from 'expo-audio'
 import { supabase } from '../../../lib/supabase'
 import { openCase } from '../../../lib/roll'
 import { Collection, DropResult, Video } from '../../../types'
+import FigmaCard from '../../../components/card'
 
 type Phase = 'idle' | 'rolling' | 'reveal'
 
@@ -578,22 +579,15 @@ export default function CaseScreen() {
         <View style={[styles.modalBg, collection?.type === 'card' && { backgroundColor: 'rgba(2,2,2,0.95)' }]}>
           
           {collection?.type === 'card' ? (
-            /* 🟢 THE FIGMA CARD LAYOUT */
-            <Animated.View style={[styles.figmaCardContainer, { transform: [{ scale: videoScale }], opacity: videoOpacity }]}>
-              
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: result?.rarity.color_hex, borderRadius: 24 }]} />
-              
-              <Image source={{ uri: result?.cdn_url || result?.thumbnail_url }} style={styles.figmaImage} contentFit="cover" />
-              
-              <View style={styles.figmaFooter}>
-                <Text style={styles.figmaFooterTitle} numberOfLines={1}>{result?.title}</Text>
-                <Text style={[styles.figmaFooterRarity, { color: result?.rarity.color_hex }]}>{result?.rarity.name.toUpperCase()}</Text>
-              </View>
-
-              <TouchableOpacity style={styles.figmaCloseBtn} onPress={handleCloseVideo}>
-                <Text style={styles.figmaCloseX}>✕</Text>
-              </TouchableOpacity>
-
+            /* 🟢 THE FIGMA CARD LAYOUT via COMPONENT */
+            <Animated.View style={[{ transform: [{ scale: videoScale }], opacity: videoOpacity }]}>
+              <FigmaCard 
+                title={result?.title || ''}
+                mediaUrl={result?.cdn_url || result?.thumbnail_url || ''}
+                rarityName={result?.rarity?.name || ''}
+                rarityColor={result?.rarity?.color_hex || '#FFFFFF'}
+                onClose={handleCloseVideo}
+              />
             </Animated.View>
           ) : (
             /* 🟢 THE TAPE PLAYER LAYOUT */
