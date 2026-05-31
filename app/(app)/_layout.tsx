@@ -95,13 +95,13 @@ export default function AppLayout() {
       {/* 🟢 Tab 4: Games */}
       <Tabs.Screen
         name="games"
-        options={{ title: 'Games', tabBarLabel: 'Games', }}
+        options={{ title: 'Games', tabBarLabel: 'Games' }}
       />
 
       {/* Tab 5: Settings */}
       <Tabs.Screen 
-        name="settings" 
-        options={{ title: 'Settings', tabBarLabel: 'Settings' }} 
+        name="profile" 
+        options={{ title: 'Profile', tabBarLabel: 'Profile' }} 
       />
 
       {/* 🔴 HIDDEN SCREENS (Explicitly hidden from the tab bar) */}
