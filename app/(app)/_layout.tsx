@@ -1,9 +1,10 @@
 import { Tabs } from 'expo-router'
-import { View, Text, StyleSheet, DeviceEventEmitter } from 'react-native'
+import { View, Text, StyleSheet, DeviceEventEmitter, TouchableOpacity } from 'react-native'
 import { Image } from 'expo-image'
 import { useState, useCallback, useEffect } from 'react'
 import { useFocusEffect } from 'expo-router'
 import { supabase } from '../../lib/supabase'
+import { Ionicons } from '@expo/vector-icons';
 
 // 🟢 1. GLOBAL TIER LOGIC
 function getBitsStyle(amount: number) {
@@ -101,7 +102,19 @@ export default function AppLayout() {
       {/* Tab 5: Settings */}
       <Tabs.Screen 
         name="profile" 
-        options={{ title: 'Profile', tabBarLabel: 'Profile' }} 
+        options={{ 
+          title: 'Profile', 
+          tabBarLabel: 'Profile',
+          // 🟢 This overrides the global Bits balance and puts the gear icon in the top right
+          headerRight: () => (
+            <TouchableOpacity 
+              onPress={() => alert('Settings Modal coming soon!')} 
+              style={{ marginRight: 20 }}
+            >
+              <Ionicons name="settings-outline" size={28} color="#888" />
+            </TouchableOpacity>
+          ),
+        }} 
       />
 
       {/* 🔴 HIDDEN SCREENS (Explicitly hidden from the tab bar) */}
