@@ -80,25 +80,31 @@ export default function AppLayout() {
         options={{ title: 'Packs', tabBarLabel: 'Packs' }} 
       />
 
-      {/* Tab 2: Vault (Formerly Inventory) */}
+      {/* Tab 2: Vault */}
       <Tabs.Screen 
         name="vault" 
         options={{ title: 'Vault', tabBarLabel: 'Vault' }} 
       />
 
-      {/* Tab 3: Shop (Added!) */}
+      {/* Tab 3: Shop */}
       <Tabs.Screen 
         name="shop" 
         options={{ title: 'Shop', tabBarLabel: 'Shop' }} 
       />
 
-      {/* Tab 4: Settings */}
+      {/* 🟢 Tab 4: Games */}
+      <Tabs.Screen
+        name="games"
+        options={{ title: 'Games', tabBarLabel: 'Games', }}
+      />
+
+      {/* Tab 5: Settings */}
       <Tabs.Screen 
         name="settings" 
         options={{ title: 'Settings', tabBarLabel: 'Settings' }} 
       />
 
-      {/* 🔴 HIDDEN SCREENS (Still navigable, but no tab icon) */}
+      {/* 🔴 HIDDEN SCREENS (Explicitly hidden from the tab bar) */}
       <Tabs.Screen name="history" options={{ href: null }} />
       <Tabs.Screen name="index" options={{ href: null }} />
     </Tabs>
