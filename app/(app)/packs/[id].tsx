@@ -11,7 +11,8 @@ import {
   Alert, 
   Modal,
   ScrollView,
-  ActivityIndicator 
+  ActivityIndicator,
+  DeviceEventEmitter
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
@@ -335,6 +336,12 @@ export default function CaseScreen() {
       if (drop.pity_count !== undefined) {
         setCurrentPity(drop.pity_count)
       }
+
+      // 🟢 NEW: Deduct the Bits locally and broadcast the update to the Global Header instantly!
+      const packCost = collection?.price || 500;
+      const newBalance = balance - packCost;
+      setBalance(newBalance);
+      DeviceEventEmitter.emit('balanceUpdated', newBalance);
 
       setPaddedTiles(initialStrip)
       setPhase('rolling')
