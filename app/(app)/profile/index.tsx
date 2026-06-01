@@ -12,6 +12,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../lib/supabase';
+// 🟢 PHASE 3: New Imports for Avatar Upload
+import * as ImagePicker from 'expo-image-picker';
+import { decode } from 'base64-arraybuffer';
 
 type SocialTab = 'FRIENDS' | 'ADD_FRIEND';
 
@@ -19,12 +22,10 @@ export default function ProfileScreen() {
   const [activeTab, setActiveTab] = useState<SocialTab>('FRIENDS');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // States for Searching and Adding Friends
   const [searchedUser, setSearchedUser] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
 
-  // States for My Friends Tab
   const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
   const [friendsList, setFriendsList] = useState<any[]>([]);
 
@@ -35,12 +36,10 @@ export default function ProfileScreen() {
     fetchUserData();
   }, []);
 
-  // 🟢 Real-Time Listener for Friendships
+  // Real-Time Listener for Friendships
   useEffect(() => {
-    // We only want to listen if we know who the user is
     if (!currentUser?.id) return;
 
-    // Subscribe to any changes on the friendships table
     const friendshipChannel = supabase
       .channel('custom-friendship-channel')
       .on(
@@ -52,7 +51,6 @@ export default function ProfileScreen() {
       )
       .subscribe();
 
-    // Cleanup the subscription when the user leaves the Profile tab
     return () => {
       supabase.removeChannel(friendshipChannel);
     };
@@ -72,10 +70,7 @@ export default function ProfileScreen() {
       if (profileError) throw profileError;
 
       setCurrentUser(profile);
-      
-      // 🟢 Trigger the social fetch immediately after we get the user ID!
       fetchSocialData(user.id);
-
     } catch (error: any) {
       Alert.alert('Error loading profile', error.message);
     } finally {
@@ -83,10 +78,8 @@ export default function ProfileScreen() {
     }
   };
 
-  // 🟢 Fetch Incoming Requests & Friends (Updated to get both!)
   const fetchSocialData = async (userId: string) => {
     try {
-      // 1. Fetch incoming pending requests
       const { data: pendingData, error: pendingError } = await supabase
         .from('friendships')
         .select(`
@@ -99,7 +92,6 @@ export default function ProfileScreen() {
       if (pendingError) throw pendingError;
       setIncomingRequests(pendingData || []);
 
-      // 2. Fetch accepted friends
       const { data: friendsData, error: friendsError } = await supabase
         .from('friendships')
         .select(`
@@ -112,44 +104,32 @@ export default function ProfileScreen() {
 
       if (friendsError) throw friendsError;
 
-      // Filter out the current user so the list only contains the "other" person
       const formattedFriends = (friendsData || []).map((row: any) => {
         const isRequester = row.requester.id === userId;
         return isRequester ? row.addressee : row.requester;
       });
 
       setFriendsList(formattedFriends);
-
     } catch (error: any) {
       console.log("Error fetching social data:", error.message);
     }
   };
 
-  // 🟢 Accept a Request
   const handleAcceptRequest = async (requestId: string) => {
     try {
-      const { error } = await supabase
-        .from('friendships')
-        .update({ status: 'accepted' })
-        .eq('id', requestId);
-        
+      const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', requestId);
       if (error) throw error;
-      if (currentUser?.id) fetchSocialData(currentUser.id); // Refresh lists
+      if (currentUser?.id) fetchSocialData(currentUser.id);
     } catch (error: any) {
       Alert.alert("Error accepting request", error.message);
     }
   };
 
-  // 🟢 Reject a Request
   const handleRejectRequest = async (requestId: string) => {
     try {
-      const { error } = await supabase
-        .from('friendships')
-        .delete()
-        .eq('id', requestId);
-        
+      const { error } = await supabase.from('friendships').delete().eq('id', requestId);
       if (error) throw error;
-      if (currentUser?.id) fetchSocialData(currentUser.id); // Refresh lists
+      if (currentUser?.id) fetchSocialData(currentUser.id);
     } catch (error: any) {
       Alert.alert("Error rejecting request", error.message);
     }
@@ -219,6 +199,53 @@ export default function ProfileScreen() {
     }
   };
 
+  // 🟢 PHASE 3: The actual upload logic
+  const uploadAvatar = async () => {
+    try {
+      // 1. Ask user to pick an image
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.5,
+        base64: true, // Request base64 so we can upload it reliably in React Native
+      });
+
+      if (!result.canceled && result.assets[0].base64) {
+        const fileExt = result.assets[0].uri.split('.').pop();
+        const filePath = `${currentUser.id}.${fileExt}`;
+
+        // 2. Upload to Supabase Storage (using base64 decoding)
+        const { error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(filePath, decode(result.assets[0].base64), { 
+            upsert: true,
+            contentType: `image/${fileExt}` 
+          });
+
+        if (uploadError) throw uploadError;
+
+        // 3. Get the public URL for the newly uploaded image
+        const { data: publicUrlData } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(filePath);
+
+        // 4. Save that URL to the users table
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({ avatar_url: publicUrlData.publicUrl })
+          .eq('id', currentUser.id);
+
+        if (updateError) throw updateError;
+
+        // 5. Refresh the UI to show the new picture!
+        fetchUserData();
+      }
+    } catch (error: any) {
+      Alert.alert("Upload Error", error.message);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.identityContainer}>
@@ -226,7 +253,8 @@ export default function ProfileScreen() {
           <ActivityIndicator size="large" color="#4877FF" style={{ marginTop: 20 }} />
         ) : (
           <>
-            <TouchableOpacity style={styles.avatarWrapper} onPress={() => alert('Image Upload coming soon!')}>
+            {/* 🟢 PHASE 3: Connect the button to the function */}
+            <TouchableOpacity style={styles.avatarWrapper} onPress={uploadAvatar}>
               {currentUser?.avatar_url ? (
                 <Image source={{ uri: currentUser.avatar_url }} style={styles.avatarImage} />
               ) : (
@@ -246,29 +274,18 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.tabContainer}>
-        <TouchableOpacity 
-          style={[styles.tabBtn, activeTab === 'FRIENDS' && styles.tabBtnActive]} 
-          onPress={() => setActiveTab('FRIENDS')}
-        >
+        <TouchableOpacity style={[styles.tabBtn, activeTab === 'FRIENDS' && styles.tabBtnActive]} onPress={() => setActiveTab('FRIENDS')}>
           <Text style={[styles.tabText, activeTab === 'FRIENDS' && styles.tabTextActive]}>My Friends</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.tabBtn, activeTab === 'ADD_FRIEND' && styles.tabBtnActive]} 
-          onPress={() => setActiveTab('ADD_FRIEND')}
-        >
+        <TouchableOpacity style={[styles.tabBtn, activeTab === 'ADD_FRIEND' && styles.tabBtnActive]} onPress={() => setActiveTab('ADD_FRIEND')}>
           <Text style={[styles.tabText, activeTab === 'ADD_FRIEND' && styles.tabTextActive]}>Add Friend</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        
-        {/* 🟢 THE MY FRIENDS TAB CONTENT */}
         {activeTab === 'FRIENDS' && (
           <View>
-            {/* Incoming Requests Section */}
             <Text style={styles.sectionTitle}>Incoming Requests ({incomingRequests.length})</Text>
-            
             {incomingRequests.length === 0 ? (
               <Text style={styles.helperText}>No pending requests.</Text>
             ) : (
@@ -281,15 +298,10 @@ export default function ProfileScreen() {
                       <Ionicons name="person-circle-outline" size={40} color="#888" />
                     )}
                     <View style={{ marginLeft: 12 }}>
-                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>
-                        {req.requester.display_name || req.requester.username}
-                      </Text>
-                      <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>
-                        @{req.requester.username}
-                      </Text>
+                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>{req.requester.display_name || req.requester.username}</Text>
+                      <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>@{req.requester.username}</Text>
                     </View>
                   </View>
-
                   <View style={styles.actionButtons}>
                     <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAcceptRequest(req.id)}>
                       <Ionicons name="checkmark" size={20} color="#fff" />
@@ -302,9 +314,7 @@ export default function ProfileScreen() {
               ))
             )}
 
-            {/* 🟢 Accepted Friends Section */}
             <Text style={[styles.sectionTitle, { marginTop: 30 }]}>My Friends ({friendsList.length})</Text>
-            
             {friendsList.length === 0 ? (
               <Text style={styles.helperText}>Your friends list is empty.</Text>
             ) : (
@@ -317,15 +327,10 @@ export default function ProfileScreen() {
                       <Ionicons name="person-circle-outline" size={40} color="#4877FF" />
                     )}
                     <View style={{ marginLeft: 12 }}>
-                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>
-                        {friend.display_name || friend.username}
-                      </Text>
-                      <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>
-                        @{friend.username}
-                      </Text>
+                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>{friend.display_name || friend.username}</Text>
+                      <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>@{friend.username}</Text>
                     </View>
                   </View>
-
                   <TouchableOpacity style={styles.tradeBtn} onPress={() => alert('Direct trading coming soon!')}>
                     <Text style={styles.tradeText}>TRADE</Text>
                   </TouchableOpacity>
@@ -335,27 +340,14 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* 🟢 THE ADD FRIEND TAB CONTENT */}
         {activeTab === 'ADD_FRIEND' && (
           <View>
             <View style={styles.searchBox}>
               <Ionicons name="search" size={20} color="#666" style={{ marginRight: 10 }} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search unique @username..."
-                placeholderTextColor="#666"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+              <TextInput style={styles.searchInput} placeholder="Search unique @username..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} autoCapitalize="none" autoCorrect={false} />
               {searchQuery.length > 0 && (
                 <TouchableOpacity style={styles.searchExecuteBtn} onPress={handleSearch} disabled={isSearching}>
-                  {isSearching ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.searchExecuteText}>FIND</Text>
-                  )}
+                  {isSearching ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.searchExecuteText}>FIND</Text>}
                 </TouchableOpacity>
               )}
             </View>
@@ -370,15 +362,10 @@ export default function ProfileScreen() {
                     <Ionicons name="person-circle-outline" size={40} color="#4877FF" />
                   )}
                   <View style={{ marginLeft: 12 }}>
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>
-                      {searchedUser.display_name || searchedUser.username}
-                    </Text>
-                    <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>
-                      @{searchedUser.username}
-                    </Text>
+                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>{searchedUser.display_name || searchedUser.username}</Text>
+                    <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>@{searchedUser.username}</Text>
                   </View>
                 </View>
-                
                 {requestStatus ? (
                   <Text style={{ color: '#538D4E', fontWeight: 'bold', fontSize: 12 }}>{requestStatus}</Text>
                 ) : (
@@ -390,7 +377,6 @@ export default function ProfileScreen() {
             )}
           </View>
         )}
-
       </ScrollView>
     </View>
   );
@@ -401,7 +387,7 @@ const styles = StyleSheet.create({
   identityContainer: { alignItems: 'center', marginBottom: 30, minHeight: 160 },
   avatarWrapper: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#333', position: 'relative' },
   avatarImage: { width: '100%', height: '100%', borderRadius: 50 },
-  editBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#4877FF', width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#121213' },
+  editBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#4877FF', width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#121213', zIndex: 10 },
   nameBlock: { alignItems: 'center', marginTop: 16 },
   displayNameText: { fontSize: 26, fontWeight: '900', color: '#fff', letterSpacing: 1 },
   friendCodeText: { fontSize: 14, fontWeight: 'bold', color: '#888', marginTop: 4, backgroundColor: '#1A1A1A', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, overflow: 'hidden' },
