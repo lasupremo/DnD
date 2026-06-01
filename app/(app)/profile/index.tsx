@@ -8,17 +8,17 @@ import {
   Image,
   TextInput,
   ActivityIndicator,
-  Alert
+  Alert,
+  DeviceEventEmitter
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../lib/supabase';
-// 🟢 PHASE 3: New Imports for Avatar Upload
-import * as ImagePicker from 'expo-image-picker';
-import { decode } from 'base64-arraybuffer';
+import { useRouter } from 'expo-router';
 
 type SocialTab = 'FRIENDS' | 'ADD_FRIEND';
 
 export default function ProfileScreen() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<SocialTab>('FRIENDS');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -36,12 +36,24 @@ export default function ProfileScreen() {
     fetchUserData();
   }, []);
 
+  // 🟢 NEW: Instantly refresh the Profile UI when settings are saved!
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('profileUpdated', () => {
+      fetchUserData(); 
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
   // Real-Time Listener for Friendships
   useEffect(() => {
     if (!currentUser?.id) return;
 
     const friendshipChannel = supabase
-      .channel('custom-friendship-channel')
+      // 🟢 FIXED: Appending Date.now() ensures a unique channel connection every render
+      .channel(`custom-friendship-channel-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'friendships' },
@@ -115,20 +127,40 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleAcceptRequest = async (requestId: string) => {
+  // 🟢 FIXED: Now accepts the full request object to know who to notify
+  const handleAcceptRequest = async (req: any) => {
     try {
-      const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', requestId);
+      const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', req.id);
       if (error) throw error;
+
+      // 🟢 NEW: Notify the person that you accepted!
+      await supabase.from('notifications').insert({
+        user_id: req.requester.id,
+        type: 'friend_accept',
+        message: `@${currentUser.username} accepted your friend request!`,
+        reference_id: req.id
+      });
+
       if (currentUser?.id) fetchSocialData(currentUser.id);
     } catch (error: any) {
       Alert.alert("Error accepting request", error.message);
     }
   };
 
-  const handleRejectRequest = async (requestId: string) => {
+  // 🟢 FIXED: Now accepts the full request object to know who to notify
+  const handleRejectRequest = async (req: any) => {
     try {
-      const { error } = await supabase.from('friendships').delete().eq('id', requestId);
+      const { error } = await supabase.from('friendships').delete().eq('id', req.id);
       if (error) throw error;
+
+      // 🟢 NEW: Notify the person that the request was declined
+      await supabase.from('notifications').insert({
+        user_id: req.requester.id,
+        type: 'friend_reject',
+        message: `@${currentUser.username} declined your friend request.`,
+        reference_id: null // The friendship row is deleted, so there is no reference to link to!
+      });
+
       if (currentUser?.id) fetchSocialData(currentUser.id);
     } catch (error: any) {
       Alert.alert("Error rejecting request", error.message);
@@ -177,13 +209,16 @@ export default function ProfileScreen() {
     if (!currentUser?.id || !searchedUser?.id) return;
 
     try {
-      const { error } = await supabase
+      // 1. Create the friendship row and return its data
+      const { data: newFriendship, error } = await supabase
         .from('friendships')
         .insert({
           requester_id: currentUser.id,
           addressee_id: searchedUser.id,
           status: 'pending'
-        });
+        })
+        .select()
+        .single();
 
       if (error) {
         if (error.code === '23505') {
@@ -192,57 +227,18 @@ export default function ProfileScreen() {
           throw error;
         }
       } else {
+        // 🟢 NEW: Drop the mail in their inbox!
+        await supabase.from('notifications').insert({
+          user_id: searchedUser.id,
+          type: 'friend_request',
+          message: `@${currentUser.username} sent you a friend request!`,
+          reference_id: newFriendship.id
+        });
+
         setRequestStatus("Request Sent!");
       }
     } catch (error: any) {
       Alert.alert("Error", error.message);
-    }
-  };
-
-  // 🟢 PHASE 3: The actual upload logic
-  const uploadAvatar = async () => {
-    try {
-      // 1. Ask user to pick an image
-      let result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.5,
-        base64: true, // Request base64 so we can upload it reliably in React Native
-      });
-
-      if (!result.canceled && result.assets[0].base64) {
-        const fileExt = result.assets[0].uri.split('.').pop();
-        const filePath = `${currentUser.id}.${fileExt}`;
-
-        // 2. Upload to Supabase Storage (using base64 decoding)
-        const { error: uploadError } = await supabase.storage
-          .from('avatars')
-          .upload(filePath, decode(result.assets[0].base64), { 
-            upsert: true,
-            contentType: `image/${fileExt}` 
-          });
-
-        if (uploadError) throw uploadError;
-
-        // 3. Get the public URL for the newly uploaded image
-        const { data: publicUrlData } = supabase.storage
-          .from('avatars')
-          .getPublicUrl(filePath);
-
-        // 4. Save that URL to the users table
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({ avatar_url: publicUrlData.publicUrl })
-          .eq('id', currentUser.id);
-
-        if (updateError) throw updateError;
-
-        // 5. Refresh the UI to show the new picture!
-        fetchUserData();
-      }
-    } catch (error: any) {
-      Alert.alert("Upload Error", error.message);
     }
   };
 
@@ -253,17 +249,13 @@ export default function ProfileScreen() {
           <ActivityIndicator size="large" color="#4877FF" style={{ marginTop: 20 }} />
         ) : (
           <>
-            {/* 🟢 PHASE 3: Connect the button to the function */}
-            <TouchableOpacity style={styles.avatarWrapper} onPress={uploadAvatar}>
+            <View style={styles.avatarWrapper}>
               {currentUser?.avatar_url ? (
                 <Image source={{ uri: currentUser.avatar_url }} style={styles.avatarImage} />
               ) : (
                 <Ionicons name="person" size={60} color="#333" />
               )}
-              <View style={styles.editBadge}>
-                <Ionicons name="camera" size={14} color="#fff" />
-              </View>
-            </TouchableOpacity>
+            </View>
             
             <View style={styles.nameBlock}>
               <Text style={styles.displayNameText}>{currentUser?.display_name || currentUser?.username || 'Unknown User'}</Text>
@@ -303,10 +295,10 @@ export default function ProfileScreen() {
                     </View>
                   </View>
                   <View style={styles.actionButtons}>
-                    <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAcceptRequest(req.id)}>
+                    <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAcceptRequest(req)}>
                       <Ionicons name="checkmark" size={20} color="#fff" />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.rejectBtn} onPress={() => handleRejectRequest(req.id)}>
+                    <TouchableOpacity style={styles.rejectBtn} onPress={() => handleRejectRequest(req)}>
                       <Ionicons name="close" size={20} color="#fff" />
                     </TouchableOpacity>
                   </View>
@@ -331,7 +323,13 @@ export default function ProfileScreen() {
                       <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>@{friend.username}</Text>
                     </View>
                   </View>
-                  <TouchableOpacity style={styles.tradeBtn} onPress={() => alert('Direct trading coming soon!')}>
+                  <TouchableOpacity 
+                    style={styles.tradeBtn} 
+                    onPress={() => router.push({ 
+                      pathname: '/shop/create-trade', 
+                      params: { targetUserId: friend.id, targetUsername: friend.username } 
+                    })}
+                  >
                     <Text style={styles.tradeText}>TRADE</Text>
                   </TouchableOpacity>
                 </View>

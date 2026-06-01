@@ -5,11 +5,12 @@ export default function ProfileLayout() {
     <Stack 
       screenOptions={{ 
         headerShown: false,
-        // 🟢 FIX: This applies the dark background to every screen in the Profile stack!
         contentStyle: { backgroundColor: '#0F0F0F' } 
       }}
     >
       <Stack.Screen name="index" />
+      {/* 🟢 NEW: Register the Settings Modal */}
+      <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
     </Stack>
   );
 }

@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { useState, useCallback, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, DeviceEventEmitter } from 'react-native';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { supabase } from '../../../lib/supabase';
@@ -21,7 +21,8 @@ export default function ShopScreen() {
   const router = useRouter();
   
   // --- UI STATES ---
-  const [activeTab, setActiveTab] = useState<'packs' | 'market'>('packs');
+  // 🟢 FIXED: Added 'direct' to activeTab options
+  const [activeTab, setActiveTab] = useState<'packs' | 'market' | 'direct'>('packs');
   const [balance, setBalance] = useState<number>(0);
   
   // --- PACK STATES ---
@@ -32,14 +33,31 @@ export default function ShopScreen() {
   const [marketListings, setMarketListings] = useState<any[]>([]);
   const [marketLoading, setMarketLoading] = useState(true);
 
+  // 🟢 NEW: DIRECT OFFERS STATES
+  const [directListings, setDirectListings] = useState<any[]>([]);
+  const [directLoading, setDirectLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
   useFocusEffect(
     useCallback(() => {
       fetchShopData();
       fetchMarketData();
+      fetchDirectData(); // 🟢 NEW: Fetch direct offers on load
     }, [])
   );
 
-  // 🟢 1. FETCH PACKS (Your existing logic)
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('refreshShopFeed', () => {
+      fetchMarketData(); 
+      fetchDirectData(); // 🟢 NEW: Refresh direct offers on event
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  // 🟢 1. FETCH PACKS
   async function fetchShopData() {
     setPacksLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
@@ -73,16 +91,18 @@ export default function ShopScreen() {
   async function fetchMarketData() {
     setMarketLoading(true);
     
-    // Using a nested query to grab the creator info AND the items inside the trade carts
     const { data, error } = await supabase
       .from('market_listings')
       .select(`
         *,
-        creator:users(username, avatar_url),
+        creator:users!creator_id(username, avatar_url), 
         items:listing_items(side, quantity, item_type, cards(title), videos(title))
       `)
       .eq('status', 'open')
+      .is('target_user_id', null)
       .order('created_at', { ascending: false });
+
+    if (error) console.error("Global Market Error:", error.message); // 🟢 Helps us debug!
 
     if (data && !error) {
       setMarketListings(data);
@@ -90,11 +110,37 @@ export default function ShopScreen() {
     setMarketLoading(false);
   }
 
-  // --- UNLOCK LOGIC (Your existing logic) ---
+  // 🟢 3. FETCH DIRECT OFFERS
+  async function fetchDirectData() {
+    setDirectLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (user) {
+      setCurrentUserId(user.id);
+      
+      const { data, error } = await supabase
+        .from('market_listings')
+        .select(`
+          *,
+          creator:users!creator_id(username, avatar_url), 
+          items:listing_items(side, quantity, item_type, cards(title), videos(title))
+        `)
+        .eq('status', 'open')
+        .eq('target_user_id', user.id)
+        .order('created_at', { ascending: false });
+        
+      if (error) console.error("Direct Offers Error:", error.message); // 🟢 Helps us debug!
+
+      if (data && !error) {
+        setDirectListings(data);
+      }
+    }
+    setDirectLoading(false);
+  }
+
   const handleUnlockPress = (pack: ShopCollection) => {
     const unlockCost = (pack as any).unlock_price || pack.price || 2000;
     
-    // 🟢 NEW: Check if they can actually afford it first
     if (balance < unlockCost) {
       Alert.alert(
         "Insufficient Bits", 
@@ -128,7 +174,6 @@ export default function ShopScreen() {
     }
   };
 
-  // Helper to visually summarize trade contents
   const summarizeTrade = (listing: any, side: 'offering' | 'requesting') => {
     const bits = side === 'offering' ? listing.offered_bits : listing.requested_bits;
     const items = listing.items?.filter((i: any) => i.side === side) || [];
@@ -150,17 +195,24 @@ export default function ShopScreen() {
       <View style={styles.headerRow}>
         <View>
           <Text style={styles.title}>Shop</Text>
-          <Text style={styles.subtitle}>{activeTab === 'packs' ? 'Spend your Bits to acquire new packs.' : 'Trade with players globally.'}</Text>
+          <Text style={styles.subtitle}>
+            {activeTab === 'packs' ? 'Spend your Bits to acquire new packs.' : 
+             activeTab === 'market' ? 'Trade with players globally.' : 
+             'Review private offers from friends.'}
+          </Text>
         </View>
       </View>
 
-      {/* 🟢 TOP TOGGLE */}
+      {/* 🟢 TOP TOGGLE: Now supports 3 tabs */}
       <View style={styles.toggleRow}>
         <TouchableOpacity style={[styles.toggleBtn, activeTab === 'packs' && styles.toggleActive]} onPress={() => setActiveTab('packs')}>
           <Text style={[styles.toggleText, activeTab === 'packs' && styles.toggleTextActive]}>System Packs</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.toggleBtn, activeTab === 'market' && styles.toggleActive]} onPress={() => setActiveTab('market')}>
           <Text style={[styles.toggleText, activeTab === 'market' && styles.toggleTextActive]}>Global Market</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.toggleBtn, activeTab === 'direct' && styles.toggleActive]} onPress={() => setActiveTab('direct')}>
+          <Text style={[styles.toggleText, activeTab === 'direct' && styles.toggleTextActive]}>Direct Offers</Text>
         </TouchableOpacity>
       </View>
 
@@ -182,14 +234,12 @@ export default function ShopScreen() {
           <ScrollView style={styles.scrollArea} contentContainerStyle={styles.grid}>
             {collections.map((pack) => {
               const packPrice = (pack as any).unlock_price || 2000; 
-              const canAfford = balance >= packPrice;
               const isUnlocked = pack.isUnlocked;
               const packBitsStyle = getBitsStyle(packPrice);
               
               return (
                 <TouchableOpacity 
                   key={pack.id} 
-                  // 🟢 FIX: Opacity is now ONLY lowered if it is already unlocked
                   style={[styles.packCard, isUnlocked && { opacity: 0.5 }]} 
                   activeOpacity={isUnlocked ? 1 : 0.8}
                   disabled={isUnlocked}
@@ -231,7 +281,7 @@ export default function ShopScreen() {
           </ScrollView>
         )
 
-      ) : (
+      ) : activeTab === 'market' ? (
 
         /* GLOBAL MARKET VIEW */
         marketLoading ? (
@@ -281,7 +331,57 @@ export default function ShopScreen() {
             )}
           </ScrollView>
         )
-      )}
+      ) : activeTab === 'direct' ? (
+
+        /* 🟢 DIRECT OFFERS VIEW */
+        directLoading ? (
+          <ActivityIndicator size="large" color="#4877FF" style={{ marginTop: 40 }} />
+        ) : (
+          <ScrollView style={styles.scrollArea} contentContainerStyle={styles.grid}>
+            {directListings.length === 0 ? (
+              <Text style={styles.emptyMarketText}>You have no pending direct offers.</Text>
+            ) : (
+              directListings.map(listing => (
+                <View key={listing.id} style={[styles.tradeCard, { borderColor: '#4877FF' }]}>
+                  {/* Creator Info */}
+                  <View style={styles.tradeHeader}>
+                    {listing.creator?.avatar_url ? (
+                      <Image source={{ uri: listing.creator.avatar_url }} style={styles.creatorAvatar} />
+                    ) : (
+                      <View style={[styles.creatorAvatar, { backgroundColor: '#444' }]} />
+                    )}
+                    <Text style={styles.creatorName}>@{listing.creator?.username || 'unknown'}</Text>
+                    <Text style={[styles.timeAgo, { color: '#4877FF' }]}>Direct Offer</Text>
+                  </View>
+
+                  {/* Trade Details */}
+                  <View style={styles.tradeBody}>
+                    <View style={styles.tradeSide}>
+                      <Text style={styles.tradeSideLabel}>Offering:</Text>
+                      <Text style={styles.tradeSideValue} numberOfLines={2}>{summarizeTrade(listing, 'offering')}</Text>
+                    </View>
+                    
+                    <View style={styles.tradeDivider} />
+                    
+                    <View style={styles.tradeSide}>
+                      <Text style={styles.tradeSideLabel}>Requesting:</Text>
+                      <Text style={styles.tradeSideValue} numberOfLines={2}>{summarizeTrade(listing, 'requesting')}</Text>
+                    </View>
+                  </View>
+
+                  {/* Action Button */}
+                  <TouchableOpacity 
+                    style={[styles.viewTradeBtn, { backgroundColor: '#4877FF' }]} 
+                    onPress={() => router.push({ pathname: '/shop/view-trade', params: { id: listing.id } })}
+                  >
+                    <Text style={[styles.viewTradeText, { color: '#fff' }]}>REVIEW OFFER</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        )
+      ) : null}
     </View>
   );
 }
@@ -295,7 +395,7 @@ const styles = StyleSheet.create({
   toggleRow: { flexDirection: 'row', backgroundColor: '#1A1A1A', borderRadius: 12, marginHorizontal: 20, padding: 4, marginBottom: 16 },
   toggleBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 8 },
   toggleActive: { backgroundColor: '#333' },
-  toggleText: { color: '#888', fontWeight: 'bold', fontSize: 14 },
+  toggleText: { color: '#888', fontWeight: 'bold', fontSize: 12 }, // Scaled down slightly to fit 3 tabs
   toggleTextActive: { color: '#fff' },
 
   createTradeBtn: { backgroundColor: '#4877FF', marginHorizontal: 20, marginBottom: 16, padding: 14, borderRadius: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },

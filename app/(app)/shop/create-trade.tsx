@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Alert, DeviceEventEmitter } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../lib/supabase';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 export default function CreateTradeScreen() {
   const router = useRouter();
+  const { targetUserId, targetUsername } = useLocalSearchParams();
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   // --- 🛒 THE TRADE CARTS ---
@@ -34,7 +35,11 @@ export default function CreateTradeScreen() {
 
   const fetchUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    setCurrentUser(user);
+    if (user) {
+      // 🟢 FIXED: Fetch the profile data so we have the actual username!
+      const { data: profile } = await supabase.from('users').select('username').eq('id', user.id).single();
+      setCurrentUser({ ...user, username: profile?.username });
+    }
   };
 
   const fetchCollections = async (category: 'card' | 'video') => {
@@ -208,20 +213,31 @@ export default function CreateTradeScreen() {
 
     try {
       // 2. Insert Parent Record (The Trade Post)
-      const { data: listingData, error: listingError } = await supabase
-        .from('market_listings')
-        .insert({
-          creator_id: currentUser.id,
-          offered_bits: parseInt(offeredBits) || 0,
-          requested_bits: parseInt(requestedBits) || 0,
-          status: 'open'
-        })
-        .select()
-        .single(); // .single() guarantees we get the exact row object back
+      const { data: listingData, error: listingError } = await supabase
+        .from('market_listings')
+        .insert({
+          creator_id: currentUser.id,
+          target_user_id: targetUserId || null, // 🟢 NEW: Links trade to friend if Direct Trade
+          offered_bits: parseInt(offeredBits) || 0,
+          requested_bits: parseInt(requestedBits) || 0,
+          status: 'open'
+        })
+        .select()
+        .single();
 
-      if (listingError) throw listingError;
+      if (listingError) throw listingError;
 
-      const listingId = listingData.id;
+      // 🟢 NEW: Send notification to the friend instantly!
+      if (targetUserId) {
+        await supabase.from('notifications').insert({
+          user_id: targetUserId as string,
+          type: 'trade_received',
+          message: `@${currentUser.username} sent you a Direct Trade offer!`,
+          reference_id: listingData.id
+        });
+      }
+
+      const listingId = listingData.id;
 
       // 3. Prepare Child Records (The Items)
       const allItemsToInsert: any[] = [];
@@ -255,14 +271,41 @@ export default function CreateTradeScreen() {
           .insert(allItemsToInsert);
 
         if (itemsError) {
-          // Security Rollback: Delete the parent post if items failed to upload
           await supabase.from('market_listings').delete().eq('id', listingId);
           throw itemsError;
         }
       }
 
-      // 5. Success!
-      Alert.alert("Success!", "Your trade has been posted to the Global Market.");
+      // 🟢 5. ESCROW: Deduct Offered Bits
+      const bitsToEscrow = parseInt(offeredBits) || 0;
+      if (bitsToEscrow > 0) {
+        const { data: uData } = await supabase.from('users').select('balance').eq('id', currentUser.id).single();
+        const newBalance = (uData?.balance || 0) - bitsToEscrow;
+        await supabase.from('users').update({ balance: newBalance }).eq('id', currentUser.id);
+        
+        DeviceEventEmitter.emit('balanceUpdated', newBalance); // Instantly update top header!
+      }
+
+      // 🟢 6. ESCROW: Deduct Offered Items (With Auto-Delete)
+      for (const item of offeredItems) {
+        const colName = item.item_type === 'card' ? 'card_id' : 'video_id';
+        const { data: invData } = await supabase.from('user_inventory')
+          .select('id, quantity').eq('user_id', currentUser.id).eq(colName, item.id).single();
+          
+        if (invData) {
+          const newQuantity = invData.quantity - item.trade_quantity;
+          
+          if (newQuantity <= 0) {
+            // If they escrowed their last copy, completely remove it from their vault!
+            await supabase.from('user_inventory').delete().eq('id', invData.id);
+          } else {
+            await supabase.from('user_inventory').update({ quantity: newQuantity }).eq('id', invData.id);
+          }
+        }
+      }
+
+      // 7. Success!
+      Alert.alert("Success!", "Your trade has been posted and your items are securely in escrow.");
       router.back(); // Send the player back to the shop
 
     } catch (error: any) {
@@ -277,10 +320,13 @@ export default function CreateTradeScreen() {
       
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="arrow-back" size={28} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Global Trade</Text>
-        <View style={{ width: 24 }} />
+        {/* 🟢 NEW: Dynamic Title */}
+        <Text style={styles.headerTitle}>
+          {targetUsername ? `Direct Trade: @${targetUsername}` : 'Create Global Trade'}
+        </Text>
+        <View style={{ width: 28 }} />
       </View>
 
       <View style={styles.section}>
@@ -404,7 +450,7 @@ export default function CreateTradeScreen() {
         ) : null}
         
         {offeredItems.map((item, idx) => (
-          <View key={idx} style={[styles.summaryItem, { borderLeftWidth: 4, borderLeftColor: item.rarity_color }]}>
+          <View key={idx} style={[styles.summaryItem, { borderWidth: 2, borderColor: item.rarity_color }]}>
             <Text style={[styles.summaryText, {flex: 1, marginRight: 8}]} numberOfLines={1} ellipsizeMode="tail">
               • {item.title} x{item.trade_quantity} ({item.item_type === 'video' ? 'Tape' : 'Card'})
             </Text>
@@ -440,7 +486,7 @@ export default function CreateTradeScreen() {
         ) : null}
 
         {requestedItems.map((item, idx) => (
-          <View key={idx} style={[styles.summaryItem, { borderLeftWidth: 4, borderLeftColor: item.rarity_color }]}>
+          <View key={idx} style={[styles.summaryItem, { borderWidth: 2, borderColor: item.rarity_color }]}>
             <Text style={[styles.summaryText, {flex: 1, marginRight: 8}]} numberOfLines={1} ellipsizeMode="tail">
               • {item.title} x{item.trade_quantity} ({item.item_type === 'video' ? 'Tape' : 'Card'})
             </Text>
