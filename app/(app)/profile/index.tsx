@@ -14,6 +14,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../lib/supabase';
 import { useRouter } from 'expo-router';
+// 🟢 NEW: Import Swipeable from Gesture Handler
+import { Swipeable } from 'react-native-gesture-handler'; 
 
 type SocialTab = 'FRIENDS' | 'ADD_FRIEND';
 
@@ -127,13 +129,11 @@ export default function ProfileScreen() {
     }
   };
 
-  // 🟢 FIXED: Now accepts the full request object to know who to notify
   const handleAcceptRequest = async (req: any) => {
     try {
       const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', req.id);
       if (error) throw error;
 
-      // 🟢 NEW: Notify the person that you accepted!
       await supabase.from('notifications').insert({
         user_id: req.requester.id,
         type: 'friend_accept',
@@ -147,24 +147,66 @@ export default function ProfileScreen() {
     }
   };
 
-  // 🟢 FIXED: Now accepts the full request object to know who to notify
   const handleRejectRequest = async (req: any) => {
     try {
       const { error } = await supabase.from('friendships').delete().eq('id', req.id);
       if (error) throw error;
 
-      // 🟢 NEW: Notify the person that the request was declined
       await supabase.from('notifications').insert({
         user_id: req.requester.id,
         type: 'friend_reject',
         message: `@${currentUser.username} declined your friend request.`,
-        reference_id: null // The friendship row is deleted, so there is no reference to link to!
+        reference_id: null 
       });
 
       if (currentUser?.id) fetchSocialData(currentUser.id);
     } catch (error: any) {
       Alert.alert("Error rejecting request", error.message);
     }
+  };
+
+  // 🟢 NEW: Delete friendship regardless of who sent the original request
+  const handleUnfriend = async (friendId: string, friendUsername: string) => {
+    Alert.alert(
+      "Unfriend",
+      `Are you sure you want to remove @${friendUsername} from your friends list?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Unfriend", 
+          style: "destructive", 
+          onPress: async () => {
+            try {
+              // This OR query checks both combinations to find the correct friendship row
+              const { error } = await supabase
+                .from('friendships')
+                .delete()
+                .or(`and(requester_id.eq.${currentUser.id},addressee_id.eq.${friendId}),and(requester_id.eq.${friendId},addressee_id.eq.${currentUser.id})`);
+
+              if (error) throw error;
+
+              // Refresh the list!
+              if (currentUser?.id) fetchSocialData(currentUser.id);
+            } catch (error: any) {
+              Alert.alert("Error unfriending", error.message);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // 🟢 NEW: The red background and trash icon that reveals on swipe
+  const renderHiddenUnfriendButton = (friendId: string, friendUsername: string) => {
+    return (
+      <TouchableOpacity 
+        style={styles.hiddenDeleteBtn} 
+        onPress={() => handleUnfriend(friendId, friendUsername)}
+      >
+        <Ionicons name="trash-outline" size={24} color="#fff" />
+        <Text style={styles.hiddenDeleteText}>Remove</Text>
+      </TouchableOpacity>
+    );
   };
 
   const handleSearch = async () => {
@@ -209,7 +251,6 @@ export default function ProfileScreen() {
     if (!currentUser?.id || !searchedUser?.id) return;
 
     try {
-      // 1. Create the friendship row and return its data
       const { data: newFriendship, error } = await supabase
         .from('friendships')
         .insert({
@@ -227,7 +268,6 @@ export default function ProfileScreen() {
           throw error;
         }
       } else {
-        // 🟢 NEW: Drop the mail in their inbox!
         await supabase.from('notifications').insert({
           user_id: searchedUser.id,
           type: 'friend_request',
@@ -311,28 +351,35 @@ export default function ProfileScreen() {
               <Text style={styles.helperText}>Your friends list is empty.</Text>
             ) : (
               friendsList.map((friend) => (
-                <View key={friend.id} style={styles.friendCard}>
-                  <View style={styles.friendInfo}>
-                    {friend.avatar_url ? (
-                      <Image source={{ uri: friend.avatar_url }} style={{ width: 40, height: 40, borderRadius: 20 }} />
-                    ) : (
-                      <Ionicons name="person-circle-outline" size={40} color="#4877FF" />
-                    )}
-                    <View style={{ marginLeft: 12 }}>
-                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>{friend.display_name || friend.username}</Text>
-                      <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>@{friend.username}</Text>
+                // 🟢 FIXED: Wrapped the friend card in a Swipeable component and moved key here
+                <Swipeable 
+                  key={friend.id} 
+                  renderRightActions={() => renderHiddenUnfriendButton(friend.id, friend.username)}
+                  overshootRight={false}
+                >
+                  <View style={styles.friendCard}>
+                    <View style={styles.friendInfo}>
+                      {friend.avatar_url ? (
+                        <Image source={{ uri: friend.avatar_url }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+                      ) : (
+                        <Ionicons name="person-circle-outline" size={40} color="#4877FF" />
+                      )}
+                      <View style={{ marginLeft: 12 }}>
+                        <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>{friend.display_name || friend.username}</Text>
+                        <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>@{friend.username}</Text>
+                      </View>
                     </View>
+                    <TouchableOpacity 
+                      style={styles.tradeBtn} 
+                      onPress={() => router.push({ 
+                        pathname: '/shop/create-trade', 
+                        params: { targetUserId: friend.id, targetUsername: friend.username } 
+                      })}
+                    >
+                      <Text style={styles.tradeText}>TRADE</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity 
-                    style={styles.tradeBtn} 
-                    onPress={() => router.push({ 
-                      pathname: '/shop/create-trade', 
-                      params: { targetUserId: friend.id, targetUsername: friend.username } 
-                    })}
-                  >
-                    <Text style={styles.tradeText}>TRADE</Text>
-                  </TouchableOpacity>
-                </View>
+                </Swipeable>
               ))
             )}
           </View>
@@ -408,5 +455,23 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, color: '#fff', fontSize: 16, height: '100%' },
   searchExecuteBtn: { backgroundColor: '#4877FF', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   searchExecuteText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
-  helperText: { color: '#666', fontSize: 12, textAlign: 'center', marginTop: 16, paddingHorizontal: 20 }
+  helperText: { color: '#666', fontSize: 12, textAlign: 'center', marginTop: 16, paddingHorizontal: 20 },
+  
+  // 🟢 NEW: Swipe-to-delete styles
+  hiddenDeleteBtn: {
+    backgroundColor: '#FF4A58',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    borderTopRightRadius: 12,
+    borderBottomRightRadius: 12,
+    marginBottom: 12, // Matches friendCard bottom margin
+    height: 'auto'
+  },
+  hiddenDeleteText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: 4
+  }
 });

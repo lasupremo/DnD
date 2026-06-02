@@ -3,9 +3,9 @@ import { Slot, useRouter, useSegments } from 'expo-router'
 import { supabase } from '../lib/supabase'
 import { Session } from '@supabase/supabase-js'
 import * as Linking from 'expo-linking'
-import { Animated, View, Image, StyleSheet, Dimensions } from 'react-native'
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window')
+import { Animated, View, Image, StyleSheet } from 'react-native'
+// 🟢 NEW: Import the Gesture Handler Root View
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null>(null)
@@ -87,7 +87,12 @@ export default function RootLayout() {
     )
   }
 
-  return <Slot />
+  // 🟢 FIXED: Wrapped the Slot so gesture handlers work globally!
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <Slot />
+    </GestureHandlerRootView>
+  )
 }
 
 const splash = StyleSheet.create({
