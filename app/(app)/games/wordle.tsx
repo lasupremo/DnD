@@ -4,7 +4,6 @@ import {
   Text, 
   StyleSheet, 
   TouchableOpacity, 
-  ActivityIndicator, 
   DeviceEventEmitter, 
   TextInput,
   KeyboardAvoidingView,
@@ -16,8 +15,8 @@ import {
 import { useRouter } from 'expo-router';
 import { supabase } from '../../../lib/supabase'; 
 import { WORD_LIST, VALID_WORD_SET } from '../../../lib/dictionary'; 
-import AsyncStorage from '@react-native-async-storage/async-storage'; // 🟢 NEW: For saving game state
-import { Ionicons } from '@expo/vector-icons'; // 🟢 NEW: For the Back Button
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 
 const KEYBOARD_ROWS = [
   ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
@@ -30,7 +29,7 @@ const TRACKER_KEY_WIDTH = Math.min((width - 80) / 10, 32);
 
 type LetterStatus = 'correct' | 'wrong_position' | 'dead' | 'unused';
 
-// 🟢 NEW: Helper to determine the Toast Colors based on user's new balance
+// Bit tier colors
 function getTierColors(amount: number) {
   if (amount >= 100000) return { bg: '#FFBB23', text: '#000' };
   if (amount >= 10000) return { bg: '#FF4A58', text: '#fff' };
@@ -130,16 +129,13 @@ export default function WordleScreen() {
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   
-  // 🟢 NEW: Toast Styling States
   const [toastBg, setToastBg] = useState<string>('#fff');
   const [toastColor, setToastColor] = useState<string>('#000');
 
-  // 🟢 NEW: On mount, try to load a saved game first
   useEffect(() => {
     loadGameState();
   }, []);
 
-  // 🟢 NEW: Save the game every time progress changes
   useEffect(() => {
     if (targetWord && !isGameOver) {
       AsyncStorage.setItem('@wordle_state', JSON.stringify({
@@ -158,7 +154,6 @@ export default function WordleScreen() {
         setRevealedGuesses(parsed.revealedGuesses);
         setCurrentGuess(parsed.currentGuess || '');
         
-        // If they left the app while game was over, reset on return
         if (parsed.revealedGuesses.length === 6 || parsed.revealedGuesses.includes(parsed.targetWord)) {
           resetGame();
         }
@@ -205,7 +200,6 @@ export default function WordleScreen() {
     ]).start(() => setToastMessage(null));
   };
 
-  // 🟢 NEW: Special End Game Toast (No shaking, stays longer, executes callback after fading)
   const showEndGameToast = (message: string, bgColor: string, textColor: string, onComplete: () => void) => {
     setToastMessage(message);
     setToastBg(bgColor);
@@ -213,11 +207,11 @@ export default function WordleScreen() {
 
     Animated.sequence([
       Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      Animated.delay(2500), // Hold for 2.5 seconds so they can read the win/loss
+      Animated.delay(2500),
       Animated.timing(toastOpacity, { toValue: 0, duration: 400, useNativeDriver: true })
     ]).start(() => {
       setToastMessage(null);
-      onComplete(); // Triggers the board reset
+      onComplete();
     });
   };
 
@@ -249,7 +243,6 @@ export default function WordleScreen() {
       handleWin(rowIndex + 1);
     } else if (rowIndex === 5) {
       setIsGameOver(true);
-      // 🟢 NEW: Loss condition uses the Toast to reveal the word, then resets
       showEndGameToast(targetWord, '#fff', '#000', () => resetGame());
     } else {
       setIsProcessing(false); 
@@ -272,12 +265,10 @@ export default function WordleScreen() {
 
       DeviceEventEmitter.emit('balanceUpdated', data.new_balance);
 
-      // 🟢 FIX: Now calculates the color based on the reward won, not the total balance!
       const tierStyles = getTierColors(data.reward);
       showEndGameToast(`+${data.reward.toLocaleString()} BITS`, tierStyles.bg, tierStyles.text, () => resetGame());
 
     } catch (err: any) {
-      // Keep Alert for actual network errors so they don't lose Bits silently
       triggerErrorUI('Network Error');
       setIsProcessing(false);
     } 
@@ -307,7 +298,7 @@ export default function WordleScreen() {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
         
-        {/* 🟢 NEW: Absolute Back Button mapped to Top Left */}
+        {/* Back Button */}
         <View style={styles.topBar}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="chevron-back" size={32} color="#fff" />
@@ -322,7 +313,6 @@ export default function WordleScreen() {
           </View>
 
           {toastMessage && (
-            // 🟢 Toast now applies dynamic colors
             <Animated.View style={[styles.toastContainer, { opacity: toastOpacity, backgroundColor: toastBg }]}>
               <Text style={[styles.toastText, { color: toastColor }]}>{toastMessage}</Text>
             </Animated.View>
@@ -425,7 +415,7 @@ const styles = StyleSheet.create({
   scrollContent: { flexGrow: 1, paddingBottom: 40 },
   touchableWrapper: { flex: 1, alignItems: 'center', justifyContent: 'space-between', paddingVertical: 20 },
   
-  // 🟢 NEW: Back Button Bar
+  // Back Button Bar
   topBar: { width: '100%', position: 'absolute', top: 20, left: 16, zIndex: 50 },
   backButton: { padding: 8 },
 
@@ -442,7 +432,7 @@ const styles = StyleSheet.create({
     zIndex: 100, 
   },
   toastText: {
-    fontWeight: '900', // Made slightly bolder to match the Bits aesthetic
+    fontWeight: '900',
     fontSize: 16,
     letterSpacing: 1
   },

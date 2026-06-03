@@ -14,7 +14,7 @@ export default function GamesScreen() {
         <TouchableOpacity 
           style={styles.gameCard} 
           activeOpacity={0.8}
-          // 🟢 Updated path for the new folder structure
+          
           onPress={() => router.push('/games/wordle')}
         >
           <Ionicons name="lock-open-outline" size={40} color="#538D4E" style={styles.gameIcon} />
@@ -24,7 +24,7 @@ export default function GamesScreen() {
           </View>
         </TouchableOpacity>
 
-        {/* 🟢 NEW: BitFlip Game Card */}
+        {/* BitFlip Game Card */}
         <TouchableOpacity style={styles.gameCard} onPress={() => router.push('/games/bitflip')}>
           <Ionicons name="hardware-chip-outline" size={40} color="#FF4A58" style={styles.gameIcon} />
           <View style={styles.gameInfo}>
@@ -38,16 +38,10 @@ export default function GamesScreen() {
 }
 
 const styles = StyleSheet.create({
-  // 🟢 Matched background color and top padding to Shop
   container: { flex: 1, backgroundColor: '#0F0F0F', paddingTop: 16 }, 
-  
-  // 🟢 Removed the massive paddingTop: 60, just kept the horizontal padding
   content: { paddingHorizontal: 20 }, 
-  
-  // 🟢 Matched font weights and spacing to Shop
   headerTitle: { fontSize: 32, fontWeight: '800', color: '#fff', marginBottom: 4 }, 
   subTitle: { fontSize: 14, color: '#888', marginBottom: 24 }, 
-  
   grid: { gap: 16 },
   gameCard: { flexDirection: 'row', backgroundColor: '#111', padding: 20, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#222' }, // Matched card colors to Shop packs
   gameIcon: { marginRight: 16 },

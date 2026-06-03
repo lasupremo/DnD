@@ -10,13 +10,12 @@ import {
   Platform,
   Animated,
   DeviceEventEmitter,
-  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '../../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 
-// Reusing your tier colors for consistency
+// Bit tier colors
 function getTierColors(amount: number) {
   if (amount >= 100000) return { bg: '#FFBB23', text: '#000' };
   if (amount >= 10000) return { bg: '#FF4A58', text: '#fff' };
@@ -68,15 +67,15 @@ export default function BitFlipScreen() {
     setToastBg(bgColor);
     setToastColor(textColor);
     
-    setIsToastVisible(true); // 🟢 Locks the button!
+    setIsToastVisible(true);
 
     Animated.sequence([
       Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      Animated.delay(500), // 🟢 FIX: Now holds for exactly 0.5 seconds!
+      Animated.delay(500),
       Animated.timing(toastOpacity, { toValue: 0, duration: 300, useNativeDriver: true })
     ]).start(() => {
       setToastMessage(null);
-      setIsToastVisible(false); // 🟢 Unlocks the button after it completely fades out!
+      setIsToastVisible(false);
     });
   };
 
@@ -93,7 +92,7 @@ export default function BitFlipScreen() {
     }
 
     setIsProcessing(true);
-    startScramble(); // Start the hacker visual effect
+    startScramble();
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -117,7 +116,7 @@ export default function BitFlipScreen() {
         const tier = getTierColors(data.wager);
         showToast(`+${data.wager.toLocaleString()} BITS`, tier.bg, tier.text);
       } else {
-        showToast(`-${data.wager.toLocaleString()} BITS`, '#3A3A3C', '#fff'); // Dark grey for a loss
+        showToast(`-${data.wager.toLocaleString()} BITS`, '#3A3A3C', '#fff');
       }
 
     } catch (err: any) {
