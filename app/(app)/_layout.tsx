@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { Ionicons } from '@expo/vector-icons';
 
-// 🟢 1. TIER LOGIC
+// TIER LOGIC
 function getBitsStyle(amount: number) {
   if (amount >= 100000) return { color: '#FFBB23', icon: require('../../assets/bits/tier06.png') }
   if (amount >= 10000) return { color: '#FF4A58', icon: require('../../assets/bits/tier05.png') }
@@ -15,7 +15,7 @@ function getBitsStyle(amount: number) {
   return { color: '#A1A1A1', icon: require('../../assets/bits/tier01.png') }
 }
 
-// 🟢 2. GLOBAL AVATAR BADGE
+// GLOBAL AVATAR BADGE
 function GlobalAvatarBadge() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
@@ -47,7 +47,7 @@ function GlobalAvatarBadge() {
   );
 }
 
-// 🟢 3. GLOBAL BITS BADGE
+// GLOBAL BITS BADGE
 function GlobalBalanceBadge() {
   const [balance, setBalance] = useState(0)
 
@@ -81,7 +81,7 @@ function GlobalBalanceBadge() {
   )
 }
 
-// 🟢 4. PROFILE INBOX ICON
+// PROFILE INBOX ICON
 function ProfileInboxIcon() {
   const router = useRouter();
   const [inboxVisible, setInboxVisible] = useState(false);
@@ -113,7 +113,6 @@ function ProfileInboxIcon() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // 🟢 NEW: Listens for the signal from view-trade to pop the inbox back open!
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('openInbox', () => setInboxVisible(true));
     return () => sub.remove();
@@ -125,8 +124,7 @@ function ProfileInboxIcon() {
       fetchInbox(); 
       DeviceEventEmitter.emit('inboxUpdated');
     }
-    
-    // 🟢 FIXED: Close inbox and route with the secret 'fromInbox' breadcrumb!
+
     if (notif.type.includes('trade') && notif.reference_id) {
       setInboxVisible(false);
       router.push({ pathname: '/shop/view-trade', params: { id: notif.reference_id, fromInbox: 'true' } });
@@ -193,8 +191,7 @@ function ProfileInboxIcon() {
                       
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.notifMessage, !notif.is_read && { color: '#fff', fontWeight: 'bold' }]}>{notif.message}</Text>
-                        
-                        {/* 🟢 FIXED: Only show text if it's a trade with a receipt */}
+
                         {notif.type.includes('trade') && notif.reference_id ? (
                           <Text style={styles.notifTime}>Tap to view receipt</Text>
                         ) : null}
@@ -215,7 +212,7 @@ function ProfileInboxIcon() {
   );
 }
 
-// 🟢 5. THE APP LAYOUT
+// APP LAYOUT
 export default function AppLayout() {
   const router = useRouter();
   const [globalUnreadCount, setGlobalUnreadCount] = useState(0);

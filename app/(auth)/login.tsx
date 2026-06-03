@@ -3,9 +3,9 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { supabase } from '../../lib/supabase'
 
 export default function LoginScreen() {
-  const [identifier, setIdentifier] = useState('') // Handles both email and username
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
-  const [username, setUsername] = useState('') // Only used for signing up
+  const [username, setUsername] = useState('')
   const [loading, setLoading] = useState(false)
   const [isSignUp, setIsSignUp] = useState(false)
 
@@ -23,7 +23,7 @@ export default function LoginScreen() {
     setLoading(true)
 
     if (isSignUp) {
-      // 🟢 SIGN UP FLOW
+      // SIGN UP FLOW
       const { error } = await supabase.auth.signUp({
         email: identifier,
         password,
@@ -34,10 +34,9 @@ export default function LoginScreen() {
       if (error) Alert.alert('Sign Up Error', error.message)
       else Alert.alert('Success', 'Account created! You can now log in.')
     } else {
-      // 🔵 LOG IN FLOW
+      // LOG IN FLOW
       let loginEmail = identifier
 
-      // If there is no '@', assume it is a username and look up the email
       if (!identifier.includes('@')) {
         const { data, error } = await supabase.rpc('get_email_by_username', { 
           p_username: identifier 
@@ -48,11 +47,9 @@ export default function LoginScreen() {
           setLoading(false)
           return
         }
-        // Set the fetched email for the actual login attempt
         loginEmail = data 
       }
 
-      // Log in using the email (either provided by the user or fetched from the DB)
       const { error } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password,
@@ -70,7 +67,6 @@ export default function LoginScreen() {
         {isSignUp ? 'Create a new account' : 'Sign in to your account'}
       </Text>
       
-      {/* Show Username field ONLY during Sign Up */}
       {isSignUp && (
         <TextInput
           style={styles.input}
@@ -82,7 +78,6 @@ export default function LoginScreen() {
         />
       )}
 
-      {/* Main input: Changes placeholder based on mode */}
       <TextInput
         style={styles.input}
         placeholder={isSignUp ? "Email address" : "Email or Username"}

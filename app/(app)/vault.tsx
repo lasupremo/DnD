@@ -167,7 +167,7 @@ export default function VaultScreen() {
         user_id: userId, 
         item_id: selectedItem.item_id, 
         item_type: selectedItem.type,
-        sell_amount: sellQuantity // 🟢 NEW: Tell the backend how many to sell
+        sell_amount: sellQuantity
       }
     })
 
@@ -177,7 +177,6 @@ export default function VaultScreen() {
       return
     }
 
-    // 🟢 NEW: Tell the global header to update instantly!
     DeviceEventEmitter.emit('balanceUpdated', data.new_balance)
     
     setItems(prevItems => 
@@ -197,7 +196,6 @@ export default function VaultScreen() {
     setIsSelling(false)
   }
 
-  // 🟢 NEW: A single function to safely shut down the player and close all states
   function closeEverything() {
     if (selectedItem?.type === 'video') player.pause();
     setIsViewingFullscreen(false);
@@ -205,7 +203,7 @@ export default function VaultScreen() {
     setIsPlaying(false); 
     setProgress(0);      
     setSellQuantity(1); 
-    setIsZoomedCard(false); // 🟢 Reset card zoom state
+    setIsZoomedCard(false);
   }
 
   const displayedItems = items.filter(item => {
@@ -216,7 +214,7 @@ export default function VaultScreen() {
   });
 
   const baseValue = selectedItem?.rarity?.sell_value || 0;
-  const sellValue = baseValue * sellQuantity; // 🟢 Multiply by the slider's value
+  const sellValue = baseValue * sellQuantity;
   const sellBitsStyle = getBitsStyle(sellValue);
 
   return (
@@ -251,7 +249,7 @@ export default function VaultScreen() {
                 style={styles.itemWrapper} 
                 onPress={() => {
                   setSelectedItem(item);
-                  setSellQuantity(1); // 🟢 Reset slider when opening a new item
+                  setSellQuantity(1);
                 }} 
                 activeOpacity={0.7}
               >
@@ -269,8 +267,7 @@ export default function VaultScreen() {
         </ScrollView>
       )}
 
-      {/* 🟢 THE UNIFIED MODAL */}
-      {/* We use ONE modal. If isViewingFullscreen is true, it shows the media. If false, it shows the pop-up card! */}
+      {/* UNIFIED MODAL */}
       <Modal visible={!!selectedItem} transparent animationType="fade" onRequestClose={closeEverything}>
         
         {isViewingFullscreen ? (
@@ -285,7 +282,7 @@ export default function VaultScreen() {
                 onClose={() => setIsViewingFullscreen(false)} 
               />
             ) : (
-              // 🟢 THE TAPE PLAYER LAYOUT 
+              // TAPE PLAYER LAYOUT 
               <View style={styles.videoCard}>
                 <TouchableOpacity activeOpacity={1} onPress={togglePlayPause} style={styles.videoTouch}>
                   <VideoView player={player} style={styles.video} contentFit="contain" nativeControls={false} />
@@ -323,8 +320,8 @@ export default function VaultScreen() {
                   onPress={() => {
                     setIsViewingFullscreen(false);
                     player.pause();
-                    setIsPlaying(false); // 🟢 Reset play state
-                    setProgress(0);      // 🟢 Reset progress bar
+                    setIsPlaying(false);
+                    setProgress(0);
                   }}
                 >
                   <Text style={styles.videoCloseText}>✕</Text>
@@ -358,7 +355,7 @@ export default function VaultScreen() {
                 <Text style={styles.popupItemQuantity}>Owned: {selectedItem?.quantity}</Text>
               </View>
 
-              {/* 🟢 NEW: Quantity Slider (Only shows if owned > 1) */}
+              {/* Quantity Slider */}
               {selectedItem && selectedItem.quantity > 1 && (
                 <View style={styles.sliderContainer}>
                   <View style={styles.sliderHeader}>
@@ -469,13 +466,13 @@ const styles = StyleSheet.create({
   sellBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
   sellBtnValue: { color: '#fff', fontSize: 15, fontWeight: '800' },
 
-  // 🟢 FULLSCREEN VIEWER STYLES
+  // FULLSCREEN VIEWER STYLES
   fullscreenContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
   fullscreenCloseBtn: { position: 'absolute', top: 60, right: 24, zIndex: 10, backgroundColor: 'rgba(30,30,30,0.8)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20 },
   fullscreenCloseText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   fullscreenMedia: { width: '100%', height: '100%' },
 
-  // --- 🟢 NEW: Custom Tape Player Styles ---
+  // CUSTOM TAPE PLAYER STYLES
   videoCard: { width: '90%', maxWidth: 400, borderRadius: 20, backgroundColor: '#111', overflow: 'hidden' },
   videoTouch: { width: '100%', aspectRatio: 9 / 16, backgroundColor: '#000' },
   video: { width: '100%', height: '100%' },
@@ -491,14 +488,14 @@ const styles = StyleSheet.create({
   videoClose: { position: 'absolute', top: 12, left: 12, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
   videoCloseText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
-  // --- 🟢 NEW: Slider Styles ---
+  // SLIDER STYLES
   sliderContainer: { paddingHorizontal: 20, paddingBottom: 16 },
   sliderHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
   sliderLabel: { color: '#A0A0A0', fontSize: 13, fontWeight: '600' },
   sliderValue: { color: '#fff', fontSize: 14, fontWeight: '800' },
   slider: { width: '100%', height: 40 },
 
-  // --- 🟢 NEW: Figma Card Layout Styles ---
+  // FIGMA CARD LAYOUT STYLES
   figmaCardContainer: {
     width: 348,     
     height: 528,    

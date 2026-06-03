@@ -3,8 +3,7 @@ import { Slot, useRouter, useSegments } from 'expo-router'
 import { supabase } from '../lib/supabase'
 import { Session } from '@supabase/supabase-js'
 import * as Linking from 'expo-linking'
-import { Animated, View, Image, StyleSheet } from 'react-native'
-// 🟢 NEW: Import the Gesture Handler Root View
+import { Animated, View, StyleSheet } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 export default function RootLayout() {
@@ -18,7 +17,6 @@ export default function RootLayout() {
   const splashOpacity = useRef(new Animated.Value(1)).current
 
   useEffect(() => {
-    // Blinking animation
     const blink = Animated.loop(
       Animated.sequence([
         Animated.timing(blinkAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
@@ -48,7 +46,6 @@ export default function RootLayout() {
       setSession(session)
       setLoading(false)
 
-      // Stop blinking, go to full opacity, then fade out splash
       blink.stop()
       Animated.sequence([
         Animated.timing(blinkAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
@@ -87,7 +84,6 @@ export default function RootLayout() {
     )
   }
 
-  // 🟢 FIXED: Wrapped the Slot so gesture handlers work globally!
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <Slot />

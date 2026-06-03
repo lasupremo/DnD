@@ -10,8 +10,6 @@ interface FigmaCardProps {
   onClose: () => void;
 }
 
-// 🟣 CLASSIFIED: The 5 rune shapes, each described as a series of SVG-like draw instructions
-// We draw them purely with View/border tricks so there's no SVG dependency
 const RUNE_CONFIGS = [
   { key: 'circle-cross' },   // ⊕ Circle with cross inside
   { key: 'triangle' },       // △ Triangle outline
@@ -20,7 +18,6 @@ const RUNE_CONFIGS = [
   { key: 'triangle-dot' },   // ▲ Triangle with vertical line
 ]
 
-// 🟣 CLASSIFIED: 8 rune spawn positions spread across the card face (x%, y% of 336x470)
 const RUNE_POSITIONS = [
   { left: 12,  top: 18  },
   { left: 82,  top: 14  },
@@ -32,19 +29,14 @@ const RUNE_POSITIONS = [
   { left: 50,  top: 68  },
 ]
 
-// 🟣 CLASSIFIED: Renders a single rune symbol using pure React Native views
 function RuneSymbol({ type, color }: { type: string; color: string }) {
   const s = StyleSheet.create({
-    // Wrapper is now 36×36 (was 18×18) — doubles the visual footprint on the card
     wrap: { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
-    // Circle scaled from 14→28px, border thickened from 1.2→2px
     circle: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: color, justifyContent: 'center', alignItems: 'center' },
-    // Internal lines scaled proportionally, height 1→2px for visibility
     hLine: { position: 'absolute', width: 20, height: 2, backgroundColor: color },
     vLine: { position: 'absolute', width: 2, height: 20, backgroundColor: color },
     diagLine1: { position: 'absolute', width: 20, height: 2, backgroundColor: color, transform: [{ rotate: '45deg' }] },
     diagLine2: { position: 'absolute', width: 20, height: 2, backgroundColor: color, transform: [{ rotate: '-45deg' }] },
-    // Square scaled from 12→24px, border thickened from 1.2→2px
     square: { width: 24, height: 24, borderWidth: 2, borderColor: color, borderRadius: 3, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
     squareLine: { width: 24, height: 2, backgroundColor: color },
   })
@@ -65,7 +57,6 @@ function RuneSymbol({ type, color }: { type: string; color: string }) {
       <View style={s.wrap}>
         <View style={{
           width: 0, height: 0,
-          // Scaled from 7/7/13 → 14/14/26
           borderLeftWidth: 14, borderRightWidth: 14, borderBottomWidth: 26,
           borderLeftColor: 'transparent', borderRightColor: 'transparent',
           borderBottomColor: color,
@@ -102,7 +93,6 @@ function RuneSymbol({ type, color }: { type: string; color: string }) {
         <View style={{ alignItems: 'center' }}>
           <View style={{
             width: 0, height: 0,
-            // Scaled from 7/7/12 → 14/14/24
             borderLeftWidth: 14, borderRightWidth: 14, borderBottomWidth: 24,
             borderLeftColor: 'transparent', borderRightColor: 'transparent',
             borderBottomColor: color,
@@ -124,11 +114,9 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
 
   const [isGlitching, setIsGlitching] = useState(false);
 
-  // --- CONTRABAND Refs ---
   const shineAnim = useRef(new Animated.Value(0)).current;
   const levitateAnim = useRef(new Animated.Value(0)).current;
 
-  // --- CONTRABAND Particles ---
   const particles = useRef(
     Array.from({ length: 70 }).map(() => {
       const edge = Math.floor(Math.random() * 4);
@@ -156,22 +144,18 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
     })
   ).current;
 
-  // --- COVERT Refs ---
   const scanAnim = useRef(new Animated.Value(0)).current;
   const alarmFlickerAnim = useRef(new Animated.Value(1)).current;
   const colorPhase = useRef(new Animated.Value(0)).current;
   const glitchLayerOpacity = useRef(new Animated.Value(1)).current;
   const laserOpacityAnim = useRef(new Animated.Value(0)).current;
 
-  // 🟣 CLASSIFIED: 8 independent Animated.Values — one per rune position
   const runeAnims = useRef(
     RUNE_POSITIONS.map(() => new Animated.Value(0))
   ).current;
 
-  // 🟣 CLASSIFIED: Slow border pulse (opacity of a highlight overlay)
   const classifiedBorderAnim = useRef(new Animated.Value(0)).current;
 
-  // 🔵 RESTRICTED: Pulsing glow only
   const restrictedGlowAnim = useRef(new Animated.Value(0)).current;
 
   function handleCardTap() {
@@ -181,7 +165,6 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
   }
 
   useEffect(() => {
-    // Stop everything first
     shineAnim.stopAnimation();
     levitateAnim.stopAnimation();
     scanAnim.stopAnimation();
@@ -256,37 +239,29 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
       return () => clearTimeout(timer);
 
     } else if (rarity === 'classified') {
-      // 🟣 CLASSIFIED: Stagger each rune's fade-in/out loop with a different base delay
-      // Each rune fades in, holds briefly, then fades out — on its own personal rhythm
       setIsGlitching(false);
 
       runeAnims.forEach((anim, i) => {
         anim.setValue(0);
 
-        // Each rune gets a slightly different cycle duration so they never all peak together
-        const fadeDuration = 700 + i * 80;       // 700ms–1260ms fade
-        const holdDuration = 900 + i * 120;      // 900ms–1740ms fully visible
-        const pauseDuration = 1200 + i * 200;    // 1200ms–2600ms dark between cycles
-        const initialDelay = i * 430;            // Stagger startup so they cascade in
+        const fadeDuration = 700 + i * 80;
+        const holdDuration = 900 + i * 120;
+        const pauseDuration = 1200 + i * 200;
+        const initialDelay = i * 430;
 
         Animated.sequence([
           Animated.delay(initialDelay),
           Animated.loop(
             Animated.sequence([
-              // Fade IN
               Animated.timing(anim, { toValue: 1, duration: fadeDuration, useNativeDriver: true }),
-              // Hold
               Animated.delay(holdDuration),
-              // Fade OUT
               Animated.timing(anim, { toValue: 0, duration: fadeDuration, useNativeDriver: true }),
-              // Dark pause before next cycle
               Animated.delay(pauseDuration),
             ])
           )
         ]).start();
       });
 
-      // 🟣 CLASSIFIED: Border glow pulses slowly on a 3s loop, independent of runes
       Animated.loop(
         Animated.sequence([
           Animated.timing(classifiedBorderAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
@@ -297,7 +272,6 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
 
 
     } else if (rarity === 'restricted') {
-      // 🔵 RESTRICTED: Simple breathing glow — same pulse mechanic as Classified, no extras
       setIsGlitching(false);
       restrictedGlowAnim.setValue(0);
       Animated.loop(
@@ -308,7 +282,6 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
       ).start();
 
     } else {
-      // Idle for all other rarities
       setIsGlitching(false);
       shineAnim.setValue(0);
       levitateAnim.setValue(0);
@@ -318,7 +291,6 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
     }
   }, [rarityName]);
 
-  // --- Interpolations ---
   const glitchBorderColor = colorPhase.interpolate({
     inputRange: [0, 0.2, 0.4, 0.6, 0.8, 1],
     outputRange: ['#FF0000', '#00FFFF', '#FFFFFF', '#000000', '#FF00FF', '#FF0000'],
@@ -330,13 +302,11 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
 
   const shadowOpacity = levitateAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.5] });
 
-  // 🟣 CLASSIFIED: Border overlay opacity — soft purple glow that breathes
   const classifiedBorderOpacity = classifiedBorderAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0.0, 0.75],
   });
 
-  // 🔵 RESTRICTED: Glow opacity — breathes between invisible and 0.75 on a 3s loop
   const restrictedGlowOpacity = restrictedGlowAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0.0, 0.75],
@@ -477,12 +447,10 @@ export default function FigmaCard({ title, mediaUrl, rarityName, rarityColor, on
               style={[
                 styles.runeWrapper,
                 {
-                  // Convert percentage positions to absolute pixel positions within the art area
                   left: 6 + (pos.left / 100) * 336,
                   top: 9 + (pos.top / 100) * 470,
                   opacity: runeAnims[i],
                   transform: [
-                    // 🟣 Each rune gently scales up as it appears, adding a materialization feel
                     {
                       scale: runeAnims[i].interpolate({
                         inputRange: [0, 1],
@@ -557,7 +525,6 @@ const styles = StyleSheet.create({
 
   particle: { position: 'absolute', top: 0, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 1, shadowRadius: 8, elevation: 5 },
 
-  // 🟣 CLASSIFIED: Rune wrapper — absolutely positioned over the card art
   runeWrapper: {
     position: 'absolute',
     zIndex: 5,
