@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, ActivityIndicator } from 'react-native' // 🟢 Image removed
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, ActivityIndicator } from 'react-native'
 import { useRouter, useFocusEffect } from 'expo-router'
 import { Image } from 'expo-image'
 import { supabase } from '../../../lib/supabase'
@@ -7,7 +7,6 @@ import { Collection } from '../../../types'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 
-// Figma / SVG math for a 2-column grid
 const PADDING = 24
 const COLUMN_GAP = 16
 const ITEM_WIDTH = (SCREEN_WIDTH - (PADDING * 2) - COLUMN_GAP) / 2
@@ -15,7 +14,7 @@ const ITEM_WIDTH = (SCREEN_WIDTH - (PADDING * 2) - COLUMN_GAP) / 2
 export default function CollectionsScreen() {
   const router = useRouter()
   const [collections, setCollections] = useState<Collection[]>([])
-  const [loading, setLoading] = useState(true) // 🟢 NEW Loading state
+  const [loading, setLoading] = useState(true)
 
   useFocusEffect(
     useCallback(() => {
@@ -24,7 +23,7 @@ export default function CollectionsScreen() {
   )
 
   async function fetchCollections() {
-    setLoading(true) // 🟢 Start loading
+    setLoading(true)
     
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
@@ -47,7 +46,7 @@ export default function CollectionsScreen() {
       setCollections(myPacks as unknown as Collection[])
     }
     
-    setLoading(false) // 🟢 End loading
+    setLoading(false)
   }
 
   return (
@@ -93,7 +92,7 @@ const styles = StyleSheet.create({
   },
   content: { 
     padding: PADDING, 
-    paddingTop: 16, // 🟢 FIX: Lowered from 64 to 16 to account for global header
+    paddingTop: 16,
     paddingBottom: 100 
   },
   headerTitle: { 

@@ -94,17 +94,17 @@ export default function CaseScreen() {
   const [pityVisible, setPityVisible] = useState(false)
   const [currentPity, setCurrentPity] = useState(0)
 
-  // 🟢 Audio Refs
+  // Audio Refs
   const openingSound = useAudioPlayer(require('../../../assets/opening.mp3'))
   const revealSound = useAudioPlayer(require('../../../assets/reveal.mp3'))
   const rollInitialSound = useAudioPlayer(require('../../../assets/roll-initial.mp3'))
   
-  // 🟢 THE AUDIO POOL: 3 separate players for flawless overlapping ticks
+  // THE AUDIO POOL
   const tickSound1 = useAudioPlayer(require('../../../assets/roll-tick.mp3'))
   const tickSound2 = useAudioPlayer(require('../../../assets/roll-tick.mp3'))
   const tickSound3 = useAudioPlayer(require('../../../assets/roll-tick.mp3'))
 
-  // 🟢 State Refs
+  // State Refs
   const tickIndex = useRef(0) // Remembers which tick sound is next in line
   const isInitialRollComplete = useRef(false)
   const rollDistance = useRef<number>(0)
@@ -149,11 +149,10 @@ export default function CaseScreen() {
     setPaddedTiles([])
 
     async function initUserAndData() {
-      setLoading(true) // 🟢 Start loading
+      setLoading(true)
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         setUserId(user.id)
-        // 🟢 Fetch their current Bits
         const { data: uData } = await supabase.from('users').select('balance').eq('id', user.id).single()
         if (uData) setBalance(uData.balance || 0)
       }
@@ -161,7 +160,7 @@ export default function CaseScreen() {
       const colData = await fetchCollection()
       
       if (colData) {
-        // 🟢 Fetch the pity specifically for THIS user on THIS collection
+        // Fetch pity
         if (user) {
           const { data: pityData, error } = await supabase
             .from('user_collection_pity')
@@ -173,7 +172,6 @@ export default function CaseScreen() {
           if (pityData && !error) {
             setCurrentPity(pityData.pity_count)
           } else {
-            // If they have never opened this specific pack before, it defaults to 0!
             setCurrentPity(0)
           }
         }
@@ -181,7 +179,7 @@ export default function CaseScreen() {
         fetchDecoys(colData)
       }
 
-      setLoading(false) // 🟢 Everything is ready, stop loading!
+      setLoading(false)
     }
     
     initUserAndData()
@@ -209,14 +207,13 @@ export default function CaseScreen() {
     return () => { if (progressInterval.current) clearInterval(progressInterval.current) }
   }, [videoVisible, isPlaying]) 
 
-  // 🟢 THE PRO-AUDIO SPATIAL LISTENER (Audio Pooling)
+  // AUDIO SPATIAL LISTENER (Audio Pooling)
   useEffect(() => {
     if (phase !== 'rolling') return;
 
     let lastTriggeredTile = -1;
     let lastAudioTime = 0;
     
-    // Group our pool into an array so we can rotate through them
     const tickSounds = [tickSound1, tickSound2, tickSound3];
 
     const listener = scrollX.addListener(({ value }) => {
@@ -227,19 +224,16 @@ export default function CaseScreen() {
         lastTriggeredTile = currentTile;
         const now = Date.now();
 
-        // 🟢 SPEED LIMITER: Tightened to 85ms for rapid tracking without UI lag
+        // SPEED LIMITER
         if (now - lastAudioTime > 85) {
           lastAudioTime = now;
           
           if (isInitialRollComplete.current) {
-            // 1. Grab the next available audio player in the pool
             const currentTick = tickSounds[tickIndex.current];
             
-            // 2. Play it!
             currentTick.seekTo(0);
             currentTick.play();
-            
-            // 3. Move the index forward for the next tile (0 -> 1 -> 2 -> 0)
+
             tickIndex.current = (tickIndex.current + 1) % 3;
           }
         }
@@ -328,8 +322,7 @@ export default function CaseScreen() {
 
     try {
       const dropPromise = openCase(id, userId)
-      
-      // 🟢 Waits precisely 1.651 seconds for opening.mp3
+
       const delayPromise = new Promise(resolve => setTimeout(resolve, 1651))
       const [drop] = await Promise.all([dropPromise, delayPromise])
 
@@ -337,7 +330,6 @@ export default function CaseScreen() {
         setCurrentPity(drop.pity_count)
       }
 
-      // 🟢 NEW: Deduct the Bits locally and broadcast the update to the Global Header instantly!
       const packCost = collection?.price || 500;
       const newBalance = balance - packCost;
       setBalance(newBalance);
@@ -348,7 +340,6 @@ export default function CaseScreen() {
       scrollX.setValue(0)
       revealAnim.setValue(0)
 
-      // 🟢 Start initial audio and timer
       isInitialRollComplete.current = false 
       rollInitialSound.seekTo(0)
       rollInitialSound.play()
@@ -473,7 +464,6 @@ export default function CaseScreen() {
   const packBitsStyle = getBitsStyle(packPrice);
   const canAfford = balance >= packPrice;
 
-  // 🟢 NEW: Show a centered loading spinner if data isn't ready yet
   if (loading || !collection) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
