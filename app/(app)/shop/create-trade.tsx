@@ -36,7 +36,6 @@ export default function CreateTradeScreen() {
   const fetchUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      // 🟢 FIXED: Fetch the profile data so we have the actual username!
       const { data: profile } = await supabase.from('users').select('username').eq('id', user.id).single();
       setCurrentUser({ ...user, username: profile?.username });
     }
@@ -61,14 +60,12 @@ export default function CreateTradeScreen() {
       if (cat === 'card') {
         const { data } = await supabase.from('cards').select('id, title, image_url, rarity_tiers(color_hex)').eq('collection_id', colId).eq('is_active', true);
         if (data) setItems(data.map((item: any) => {
-          // 🟢 Bulletproof check for both TS and runtime arrays
           const rarity = Array.isArray(item.rarity_tiers) ? item.rarity_tiers[0] : item.rarity_tiers;
           return { ...item, rarity_color: rarity?.color_hex || '#333', maxQuantity: 99 };
         }));
       } else {
         const { data } = await supabase.from('videos').select('id, title, thumbnail_url, rarity_tiers(color_hex)').eq('collection_id', colId).eq('is_active', true);
         if (data) setItems(data.map((item: any) => {
-          // 🟢 Bulletproof check for both TS and runtime arrays
           const rarity = Array.isArray(item.rarity_tiers) ? item.rarity_tiers[0] : item.rarity_tiers;
           return { ...item, image_url: item.thumbnail_url, rarity_color: rarity?.color_hex || '#333', maxQuantity: 99 };
         }));
@@ -116,7 +113,6 @@ export default function CreateTradeScreen() {
     setItems([]);
   };
 
-  // 🟢 FIX 1: Clear items when category changes
   const handleSelectCategory = (cat: 'card' | 'video') => {
     setSelectedCategory(cat);
     setSelectedCollection(null);
@@ -132,7 +128,6 @@ export default function CreateTradeScreen() {
     }
   };
 
-  // 🟢 FIX 2: Consolidate duplicates in the cart
   const handleAddItem = () => {
     if (!selectedItem || !selectedCategory) return;
 
@@ -171,7 +166,7 @@ export default function CreateTradeScreen() {
     setSelectedItem(null); 
   };
 
-  // 🟢 NEW FEATURE: Inline editing from the Trade Summary
+  // Inline editing from the Trade Summary
   const handleUpdateCartQuantity = (index: number, side: 'offering' | 'requesting', delta: number) => {
     const updateCart = (prev: any[]) => {
       const newArray = [...prev];
@@ -188,7 +183,7 @@ export default function CreateTradeScreen() {
     } else {
       setRequestedItems(updateCart);
     }
-    setSelectedItem(null); // Resets selection to cleanly recalculate available UI limits
+    setSelectedItem(null);
   };
 
   const getRemainingQuantity = (item: any, side: 'offering' | 'requesting') => {
@@ -201,9 +196,7 @@ export default function CreateTradeScreen() {
   const availableItems = items.filter(item => getRemainingQuantity(item, tradeSide) > 0);
   const currentRemaining = selectedItem ? getRemainingQuantity(selectedItem, tradeSide) : 0;
 
-  // 🟢 NEW: Submit the Trade to Supabase
   const handleSubmitTrade = async () => {
-    // 1. Validation check
     if (!offeredBits && offeredItems.length === 0 && !requestedBits && requestedItems.length === 0) {
       Alert.alert("Error", "You cannot post an entirely empty trade!");
       return;
@@ -212,12 +205,11 @@ export default function CreateTradeScreen() {
     setIsSubmitting(true);
 
     try {
-      // 2. Insert Parent Record (The Trade Post)
       const { data: listingData, error: listingError } = await supabase
         .from('market_listings')
         .insert({
           creator_id: currentUser.id,
-          target_user_id: targetUserId || null, // 🟢 NEW: Links trade to friend if Direct Trade
+          target_user_id: targetUserId || null,
           offered_bits: parseInt(offeredBits) || 0,
           requested_bits: parseInt(requestedBits) || 0,
           status: 'open'
@@ -227,7 +219,6 @@ export default function CreateTradeScreen() {
 
       if (listingError) throw listingError;
 
-      // 🟢 NEW: Send notification to the friend instantly!
       if (targetUserId) {
         await supabase.from('notifications').insert({
           user_id: targetUserId as string,
@@ -238,8 +229,6 @@ export default function CreateTradeScreen() {
       }
 
       const listingId = listingData.id;
-
-      // 3. Prepare Child Records (The Items)
       const allItemsToInsert: any[] = [];
 
       offeredItems.forEach(item => {
@@ -264,7 +253,6 @@ export default function CreateTradeScreen() {
         });
       });
 
-      // 4. Bulk Insert Items (if there are any)
       if (allItemsToInsert.length > 0) {
         const { error: itemsError } = await supabase
           .from('listing_items')
@@ -276,17 +264,15 @@ export default function CreateTradeScreen() {
         }
       }
 
-      // 🟢 5. ESCROW: Deduct Offered Bits
       const bitsToEscrow = parseInt(offeredBits) || 0;
       if (bitsToEscrow > 0) {
         const { data: uData } = await supabase.from('users').select('balance').eq('id', currentUser.id).single();
         const newBalance = (uData?.balance || 0) - bitsToEscrow;
         await supabase.from('users').update({ balance: newBalance }).eq('id', currentUser.id);
         
-        DeviceEventEmitter.emit('balanceUpdated', newBalance); // Instantly update top header!
+        DeviceEventEmitter.emit('balanceUpdated', newBalance);
       }
 
-      // 🟢 6. ESCROW: Deduct Offered Items (With Auto-Delete)
       for (const item of offeredItems) {
         const colName = item.item_type === 'card' ? 'card_id' : 'video_id';
         const { data: invData } = await supabase.from('user_inventory')
@@ -296,7 +282,6 @@ export default function CreateTradeScreen() {
           const newQuantity = invData.quantity - item.trade_quantity;
           
           if (newQuantity <= 0) {
-            // If they escrowed their last copy, completely remove it from their vault!
             await supabase.from('user_inventory').delete().eq('id', invData.id);
           } else {
             await supabase.from('user_inventory').update({ quantity: newQuantity }).eq('id', invData.id);
@@ -304,10 +289,8 @@ export default function CreateTradeScreen() {
         }
       }
 
-      // 7. Success!
       Alert.alert("Success!", "Your trade has been posted and your items are securely in escrow.");
-      router.back(); // Send the player back to the shop
-
+      router.back();
     } catch (error: any) {
       Alert.alert("Error posting trade", error.message);
     } finally {
@@ -322,7 +305,7 @@ export default function CreateTradeScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={28} color="#fff" />
         </TouchableOpacity>
-        {/* 🟢 NEW: Dynamic Title */}
+        {/* Title */}
         <Text style={styles.headerTitle}>
           {targetUsername ? `Direct Trade: @${targetUsername}` : 'Create Global Trade'}
         </Text>
@@ -455,7 +438,7 @@ export default function CreateTradeScreen() {
               • {item.title} x{item.trade_quantity} ({item.item_type === 'video' ? 'Tape' : 'Card'})
             </Text>
             <View style={styles.summaryActions}>
-              {/* 🟢 Inline Edit UI - Only visible if max quantity > 1 */}
+              {/* Inline Edit UI - Only visible if max quantity > 1 */}
               {item.maxQuantity > 1 && (
                 <View style={styles.inlineEditBox}>
                   <TouchableOpacity onPress={() => handleUpdateCartQuantity(idx, 'offering', -1)} disabled={item.trade_quantity <= 1}>
@@ -491,7 +474,7 @@ export default function CreateTradeScreen() {
               • {item.title} x{item.trade_quantity} ({item.item_type === 'video' ? 'Tape' : 'Card'})
             </Text>
             <View style={styles.summaryActions}>
-              {/* 🟢 Inline Edit UI for requested items (always > 1 max limit) */}
+              {/* Inline Edit UI - for requested items (always > 1 max limit) */}
               {item.maxQuantity > 1 && (
                 <View style={styles.inlineEditBox}>
                   <TouchableOpacity onPress={() => handleUpdateCartQuantity(idx, 'requesting', -1)} disabled={item.trade_quantity <= 1}>

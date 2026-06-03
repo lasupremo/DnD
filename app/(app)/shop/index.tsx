@@ -21,7 +21,6 @@ export default function ShopScreen() {
   const router = useRouter();
   
   // --- UI STATES ---
-  // 🟢 FIXED: Added 'direct' to activeTab options
   const [activeTab, setActiveTab] = useState<'packs' | 'market' | 'direct'>('packs');
   const [balance, setBalance] = useState<number>(0);
   
@@ -33,7 +32,7 @@ export default function ShopScreen() {
   const [marketListings, setMarketListings] = useState<any[]>([]);
   const [marketLoading, setMarketLoading] = useState(true);
 
-  // 🟢 NEW: DIRECT OFFERS STATES
+  // --- DIRECT OFFERS STATES ---
   const [directListings, setDirectListings] = useState<any[]>([]);
   const [directLoading, setDirectLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -42,14 +41,14 @@ export default function ShopScreen() {
     useCallback(() => {
       fetchShopData();
       fetchMarketData();
-      fetchDirectData(); // 🟢 NEW: Fetch direct offers on load
+      fetchDirectData();
     }, [])
   );
 
   useEffect(() => {
     const subscription = DeviceEventEmitter.addListener('refreshShopFeed', () => {
       fetchMarketData(); 
-      fetchDirectData(); // 🟢 NEW: Refresh direct offers on event
+      fetchDirectData();
     });
 
     return () => {
@@ -57,7 +56,6 @@ export default function ShopScreen() {
     };
   }, []);
 
-  // 🟢 1. FETCH PACKS
   async function fetchShopData() {
     setPacksLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
@@ -87,7 +85,6 @@ export default function ShopScreen() {
     setPacksLoading(false);
   }
 
-  // 🟢 2. FETCH GLOBAL MARKET TRADES
   async function fetchMarketData() {
     setMarketLoading(true);
     
@@ -102,7 +99,7 @@ export default function ShopScreen() {
       .is('target_user_id', null)
       .order('created_at', { ascending: false });
 
-    if (error) console.error("Global Market Error:", error.message); // 🟢 Helps us debug!
+    if (error) console.error("Global Market Error:", error.message);
 
     if (data && !error) {
       setMarketListings(data);
@@ -110,7 +107,6 @@ export default function ShopScreen() {
     setMarketLoading(false);
   }
 
-  // 🟢 3. FETCH DIRECT OFFERS
   async function fetchDirectData() {
     setDirectLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
@@ -129,7 +125,7 @@ export default function ShopScreen() {
         .eq('target_user_id', user.id)
         .order('created_at', { ascending: false });
         
-      if (error) console.error("Direct Offers Error:", error.message); // 🟢 Helps us debug!
+      if (error) console.error("Direct Offers Error:", error.message);
 
       if (data && !error) {
         setDirectListings(data);
@@ -203,7 +199,7 @@ export default function ShopScreen() {
         </View>
       </View>
 
-      {/* 🟢 TOP TOGGLE: Now supports 3 tabs */}
+      {/* TOP TOGGL */}
       <View style={styles.toggleRow}>
         <TouchableOpacity style={[styles.toggleBtn, activeTab === 'packs' && styles.toggleActive]} onPress={() => setActiveTab('packs')}>
           <Text style={[styles.toggleText, activeTab === 'packs' && styles.toggleTextActive]}>System Packs</Text>
@@ -216,7 +212,7 @@ export default function ShopScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 🟢 CREATE TRADE BUTTON (Only shows in Market Tab) */}
+      {/* CREATE TRADE BUTTON (Only shows in Market Tab) */}
       {activeTab === 'market' && (
         <TouchableOpacity style={styles.createTradeBtn} onPress={() => router.push('/shop/create-trade')}>
           <Ionicons name="add-circle-outline" size={24} color="#fff" />
@@ -224,7 +220,7 @@ export default function ShopScreen() {
         </TouchableOpacity>
       )}
 
-      {/* 🟢 TAB CONTENT RENDERING */}
+      {/* TAB CONTENT RENDERING */}
       {activeTab === 'packs' ? (
         
         /* PACKS VIEW */
@@ -333,7 +329,7 @@ export default function ShopScreen() {
         )
       ) : activeTab === 'direct' ? (
 
-        /* 🟢 DIRECT OFFERS VIEW */
+        /* DIRECT OFFERS VIEW */
         directLoading ? (
           <ActivityIndicator size="large" color="#4877FF" style={{ marginTop: 40 }} />
         ) : (
@@ -395,7 +391,7 @@ const styles = StyleSheet.create({
   toggleRow: { flexDirection: 'row', backgroundColor: '#1A1A1A', borderRadius: 12, marginHorizontal: 20, padding: 4, marginBottom: 16 },
   toggleBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 8 },
   toggleActive: { backgroundColor: '#333' },
-  toggleText: { color: '#888', fontWeight: 'bold', fontSize: 12 }, // Scaled down slightly to fit 3 tabs
+  toggleText: { color: '#888', fontWeight: 'bold', fontSize: 12 },
   toggleTextActive: { color: '#fff' },
 
   createTradeBtn: { backgroundColor: '#4877FF', marginHorizontal: 20, marginBottom: 16, padding: 14, borderRadius: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
@@ -404,7 +400,6 @@ const styles = StyleSheet.create({
   scrollArea: { flex: 1 },
   grid: { paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
   
-  // Existing Pack Styles
   packCard: { backgroundColor: '#111', borderRadius: 20, borderWidth: 1, borderColor: '#222', overflow: 'hidden', flexDirection: 'row', height: 140 },
   imageContainer: { width: 140, height: '100%', backgroundColor: '#1a1a1a' },
   coverImage: { width: '100%', height: '100%' },
@@ -419,7 +414,6 @@ const styles = StyleSheet.create({
   ownedRow: { marginTop: 8, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: '#222', borderRadius: 6, alignSelf: 'flex-start' },
   ownedText: { color: '#888', fontSize: 10, fontWeight: '800', letterSpacing: 1 },
 
-  // New Market Trade Styles
   emptyMarketText: { color: '#666', textAlign: 'center', marginTop: 40, fontSize: 14 },
   tradeCard: { backgroundColor: '#111', borderRadius: 16, borderWidth: 1, borderColor: '#222', padding: 16 },
   tradeHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },

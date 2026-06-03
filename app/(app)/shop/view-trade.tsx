@@ -16,18 +16,16 @@ function getBitsStyle(amount: number) {
 
 export default function ViewTradeScreen() {
   const router = useRouter();
-  // 🟢 FIXED: Now catches the fromInbox breadcrumb
   const { id, fromInbox } = useLocalSearchParams(); 
   
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [trade, setTrade] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 🟢 NEW: Smart routing for the Close button
   const handleClose = () => {
     if (fromInbox === 'true') {
       router.push('/profile'); 
-      setTimeout(() => DeviceEventEmitter.emit('openInbox'), 300); // Give it a split second, then pop the Inbox!
+      setTimeout(() => DeviceEventEmitter.emit('openInbox'), 300);
     } else {
       router.back(); 
     }
@@ -40,14 +38,12 @@ export default function ViewTradeScreen() {
   const fetchData = async () => {
     setIsLoading(true);
     
-    // 1. Get current user
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       const { data: profile } = await supabase.from('users').select('username').eq('id', user.id).single();
       setCurrentUser({ ...user, username: profile?.username });
     }
 
-    // 2. Fetch the fresh trade data
     const { data, error } = await supabase
       .from('market_listings')
       .select(`
@@ -62,7 +58,6 @@ export default function ViewTradeScreen() {
       .eq('id', id)
       .single();
 
-    // 🟢 FIXED: Removed the BOUNCER! It now allows completed/cancelled trades to render as a receipt.
     if (data && !error) {
       setTrade(data);
     }
@@ -294,7 +289,7 @@ export default function ViewTradeScreen() {
                 user_id: trade.creator_id,
                 type: 'trade_reject',
                 message: `@${currentUser.username} declined your Direct Trade.`,
-                reference_id: trade.id // Keeps the reference ID so the creator can see the receipt!
+                reference_id: trade.id
               });
 
               DeviceEventEmitter.emit('refreshShopFeed');
@@ -314,7 +309,6 @@ export default function ViewTradeScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        {/* 🟢 FIXED: Calls the smart handleClose function */}
         <TouchableOpacity onPress={handleClose}>
           <Ionicons name="close" size={28} color="#fff" />
         </TouchableOpacity>
@@ -330,8 +324,7 @@ export default function ViewTradeScreen() {
             <View style={[styles.avatarLarge, { backgroundColor: '#444' }]} />
           )}
           <Text style={styles.creatorUsername}>@{trade.creator?.username}</Text>
-          
-          {/* 🟢 FIXED: Dynamic badge that changes based on completion status */}
+
           <Text style={[
             styles.statusBadge, 
             trade.status === 'completed' && { backgroundColor: '#4877FF' },
@@ -417,7 +410,6 @@ export default function ViewTradeScreen() {
         </View>
       </ScrollView>
 
-      {/* 🟢 FIXED: Only renders the Action Footer if the trade is open! */}
       {trade.status === 'open' && (
         <View style={styles.footer}>
           {isCreator ? (
