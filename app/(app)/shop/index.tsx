@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, DeviceEventEmitter } from 'react-native';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { supabase } from '../../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { Collection } from '../../../types';
+import CustomAlert, { AlertButton } from '../../../components/CustomAlert';
 
 type ShopCollection = Collection & { price: number; isUnlocked?: boolean };
 
@@ -36,6 +37,15 @@ export default function ShopScreen() {
   const [directListings, setDirectListings] = useState<any[]>([]);
   const [directLoading, setDirectLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  // Custom Alert State
+  const [alertConfig, setAlertConfig] = useState<{ visible: boolean, title: string, message: string, buttons?: AlertButton[] }>({
+    visible: false, title: '', message: ''
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setAlertConfig({ visible: true, title, message });
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -138,17 +148,24 @@ export default function ShopScreen() {
     const unlockCost = (pack as any).unlock_price || pack.price || 2000;
     
     if (balance < unlockCost) {
-      Alert.alert(
+      // Custom Alert Error
+      showAlert(
         "Insufficient Bits", 
         `You need ${unlockCost.toLocaleString()} Bits to unlock ${pack.name}. Keep saving up!`
       );
       return;
     }
 
-    Alert.alert("Unlock Pack", `Do you want to permanently unlock the ${pack.name} pack for ${unlockCost.toLocaleString()} bits?`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Unlock", style: "default", onPress: () => processUnlock(pack, unlockCost) }
-    ]);
+    // Custom Alert Confirmation
+    setAlertConfig({
+      visible: true,
+      title: "Unlock Pack",
+      message: `Do you want to permanently unlock the ${pack.name} pack for ${unlockCost.toLocaleString()} bits?`,
+      buttons: [
+        { text: "Cancel", style: "cancel" },
+        { text: "Unlock", style: "default", onPress: () => processUnlock(pack, unlockCost) }
+      ]
+    });
   };
 
   const processUnlock = async (pack: ShopCollection, unlockCost: number) => {
@@ -159,14 +176,14 @@ export default function ShopScreen() {
       const { data, error } = await supabase.functions.invoke('unlock_pack', { body: { user_id: user.id, collection_id: pack.id } });
       if (error || data?.error) throw new Error(data?.error || error?.message || 'Failed to unlock');
 
-      Alert.alert("Success!", `${pack.name} has been unlocked!`);
+      showAlert("Success!", `${pack.name} has been unlocked!`);
       setCollections(prev => {
         const updated = prev.map(p => p.id === pack.id ? { ...p, isUnlocked: true } : p);
         return updated.sort((a, b) => (a.isUnlocked === b.isUnlocked ? 0 : (a.isUnlocked ? 1 : -1)));
       });
       setBalance(prev => prev - unlockCost);
     } catch (err: any) {
-      Alert.alert("Error", err.message);
+      showAlert("Error", err.message);
     }
   };
 
@@ -199,7 +216,7 @@ export default function ShopScreen() {
         </View>
       </View>
 
-      {/* TOP TOGGL */}
+      {/* TOP TOGGLE */}
       <View style={styles.toggleRow}>
         <TouchableOpacity style={[styles.toggleBtn, activeTab === 'packs' && styles.toggleActive]} onPress={() => setActiveTab('packs')}>
           <Text style={[styles.toggleText, activeTab === 'packs' && styles.toggleTextActive]}>System Packs</Text>
@@ -212,7 +229,7 @@ export default function ShopScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* CREATE TRADE BUTTON (Only shows in Market Tab) */}
+      {/* CREATE TRADE BUTTON */}
       {activeTab === 'market' && (
         <TouchableOpacity style={styles.createTradeBtn} onPress={() => router.push('/shop/create-trade')}>
           <Ionicons name="add-circle-outline" size={24} color="#fff" />
@@ -378,6 +395,15 @@ export default function ShopScreen() {
           </ScrollView>
         )
       ) : null}
+
+      {/* Custom Alert Component */}
+      <CustomAlert 
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttons={alertConfig.buttons}
+        onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+      />
     </View>
   );
 }

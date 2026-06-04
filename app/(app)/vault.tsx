@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, Alert, DeviceEventEmitter } from 'react-native'
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, DeviceEventEmitter } from 'react-native'
 import { Image } from 'expo-image'
 import { useFocusEffect } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
 import { supabase } from '../../lib/supabase'
 import Slider from '@react-native-community/slider'
 import FigmaCard from '../../components/card'
+import CustomAlert, { AlertButton } from '../../components/CustomAlert'
 
 type InventoryItem = {
   inventory_id: string;
@@ -45,16 +46,14 @@ export default function VaultScreen() {
   const [isZoomedCard, setIsZoomedCard] = useState(false)
   const lastTapRef = useRef<number>(0)
 
-  function handleCardTap() {
-    const now = Date.now()
-    const DOUBLE_PRESS_DELAY = 300 // 300ms window for a double tap
-    if (now - lastTapRef.current < DOUBLE_PRESS_DELAY) {
-      setIsZoomedCard(true)
-    }
-    lastTapRef.current = now
-  }
+  const [alertConfig, setAlertConfig] = useState<{ visible: boolean, title: string, message: string, buttons?: AlertButton[] }>({
+    visible: false, title: '', message: ''
+  });
 
-  // Initialize the player. It safely defaults to an empty string if nothing is selected.
+  const showAlert = (title: string, message: string) => {
+    setAlertConfig({ visible: true, title, message });
+  };
+
   const player = useVideoPlayer(selectedItem?.media_url ?? '', (p) => { p.loop = false })
 
   // --- PLAYER LOGIC ---
@@ -158,6 +157,30 @@ export default function VaultScreen() {
     setLoading(false)
   }
 
+  const confirmSellItem = () => {
+    if (!selectedItem || isSelling) return;
+
+    const baseValue = selectedItem.rarity.sell_value || 0;
+    const sellValue = baseValue * sellQuantity;
+    const quantityText = sellQuantity > 1 ? `${sellQuantity} copies of ` : '';
+
+    setAlertConfig({
+      visible: true,
+      title: "Confirm Sale",
+      message: `Are you sure you want to sell ${quantityText}"${selectedItem.title}" for ${sellValue.toLocaleString()} Bits?`,
+      buttons: [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Confirm", 
+          style: "default", 
+          onPress: () => {
+            handleSellItem();
+          }
+        }
+      ]
+    });
+  };
+
   async function handleSellItem() {
     if (!selectedItem || isSelling) return
     setIsSelling(true)
@@ -172,7 +195,7 @@ export default function VaultScreen() {
     })
 
     if (error || !data?.success) {
-      Alert.alert("Error", "Could not sell item. Please try again.")
+      showAlert("Error", "Could not sell item. Please try again.")
       setIsSelling(false)
       return
     }
@@ -394,7 +417,7 @@ export default function VaultScreen() {
                 
                 <TouchableOpacity 
                   style={[ styles.sellBtn, { borderColor: sellBitsStyle.color }, isSelling && { opacity: 0.5 } ]} 
-                  onPress={handleSellItem}
+                  onPress={confirmSellItem}
                   disabled={isSelling}
                   activeOpacity={0.7}
                 >
@@ -415,8 +438,27 @@ export default function VaultScreen() {
             </TouchableOpacity>
           </TouchableOpacity>
         )}
+        
+        {/* 🟢 FIXED 1/2: Alert rendered INSIDE the modal so it appears over the item popup! */}
+        <CustomAlert 
+          visible={alertConfig.visible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          buttons={alertConfig.buttons}
+          onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+        />
       </Modal>
 
+      {/* 🟢 FIXED 2/2: Alert rendered OUTSIDE the modal for general screen errors! */}
+      {!selectedItem && (
+        <CustomAlert 
+          visible={alertConfig.visible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          buttons={alertConfig.buttons}
+          onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+        />
+      )}
     </View>
   )
 }

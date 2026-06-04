@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, DeviceEventEmitter } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '../../../lib/supabase';
 import { Image } from 'expo-image';
+import CustomAlert, { AlertButton } from '../../../components/CustomAlert';
 
 function getBitsStyle(amount: number) {
   if (amount >= 100000) return { color: '#FFBB23', icon: require('../../../assets/bits/tier06.png') };
@@ -21,6 +22,15 @@ export default function ViewTradeScreen() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [trade, setTrade] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Custom Alert State
+  const [alertConfig, setAlertConfig] = useState<{ visible: boolean, title: string, message: string, buttons?: AlertButton[] }>({
+    visible: false, title: '', message: ''
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setAlertConfig({ visible: true, title, message });
+  };
 
   const handleClose = () => {
     if (fromInbox === 'true') {
@@ -88,10 +98,11 @@ export default function ViewTradeScreen() {
   const requestedItems = trade.items?.filter((i: any) => i.side === 'requesting') || [];
 
   const handleCancelTrade = async () => {
-    Alert.alert(
-      "Cancel Trade",
-      "Are you sure you want to remove this trade from the global market?",
-      [
+    setAlertConfig({
+      visible: true,
+      title: "Cancel Trade",
+      message: "Are you sure you want to remove this trade from the global market?",
+      buttons: [
         { text: "Keep it open", style: "cancel" },
         { 
           text: "Cancel Trade", 
@@ -99,6 +110,7 @@ export default function ViewTradeScreen() {
           onPress: async () => {
             setIsLoading(true);
 
+            // 1. Refund the Bits
             if (trade.offered_bits > 0) {
               const { data: uData } = await supabase.from('users').select('balance').eq('id', currentUser.id).single();
               const newBalance = (uData?.balance || 0) + trade.offered_bits;
@@ -106,44 +118,52 @@ export default function ViewTradeScreen() {
               DeviceEventEmitter.emit('balanceUpdated', newBalance); 
             }
 
+            // 2. Refund the Items
             for (const item of offeredItems) {
               const colName = item.item_type === 'card' ? 'card_id' : 'video_id';
               const itemId = item.item_type === 'card' ? item.card_id : item.video_id;
               
               const { data: invData } = await supabase.from('user_inventory')
-                .select('id, quantity').eq('user_id', currentUser.id).eq(colName, itemId).single();
+                .select('id, quantity').eq('user_id', currentUser.id).eq(colName, itemId).maybeSingle();
                 
               if (invData) {
                 await supabase.from('user_inventory')
                   .update({ quantity: invData.quantity + item.quantity })
                   .eq('id', invData.id);
+              } else {
+                await supabase.from('user_inventory').insert({
+                  user_id: currentUser.id,
+                  [colName]: itemId,
+                  quantity: item.quantity
+                });
               }
             }
 
+            // 3. Mark the trade as cancelled
             const { error } = await supabase
               .from('market_listings')
               .update({ status: 'cancelled' })
               .eq('id', trade.id);
 
             if (error) {
-              Alert.alert("Error", error.message);
+              showAlert("Error", error.message);
               setIsLoading(false);
             } else {
-              Alert.alert("Trade Cancelled", "Your items and Bits have been safely refunded.");
+              showAlert("Trade Cancelled", "Your items and Bits have been safely refunded.");
               DeviceEventEmitter.emit('refreshShopFeed');
               handleClose(); 
             }
           }
         }
       ]
-    );
+    });
   };
 
   const handleAcceptTrade = async () => {
     if (trade.requested_bits > 0) {
       const { data: bData } = await supabase.from('users').select('balance').eq('id', currentUser.id).single();
       if ((bData?.balance || 0) < trade.requested_bits) {
-        Alert.alert("Insufficient Bits", "You do not have enough Bits to accept this trade.");
+        showAlert("Insufficient Bits", "You do not have enough Bits to accept this trade.");
         return;
       }
     }
@@ -156,18 +176,21 @@ export default function ViewTradeScreen() {
         .select('quantity').eq('user_id', currentUser.id).eq(colName, itemId).single();
 
       if (!invData || invData.quantity < item.quantity) {
-        Alert.alert("Missing Items", "You do not have the required items in your vault to accept this trade.");
+        showAlert("Missing Items", "You do not have the required items in your vault to accept this trade.");
         return;
       }
     }
 
-    Alert.alert(
-      "Confirm Trade",
-      "Are you sure you want to hand over your items and complete this trade?",
-      [
+    // Custom Alert Confirmation
+    setAlertConfig({
+      visible: true,
+      title: "Confirm Trade",
+      message: "Are you sure you want to hand over your items and complete this trade?",
+      buttons: [
         { text: "Cancel", style: "cancel" },
         { 
           text: "Accept Trade", 
+          style: "default",
           onPress: async () => {
             setIsLoading(true);
 
@@ -225,27 +248,29 @@ export default function ViewTradeScreen() {
                 reference_id: trade.id
               });
 
-              Alert.alert("Trade Successful!", "The items and Bits have been added to your vault.");
+              showAlert("Trade Successful!", "The items and Bits have been added to your vault.");
               DeviceEventEmitter.emit('refreshShopFeed');
               handleClose();
 
             } catch (err: any) {
-              Alert.alert("Transaction Error", err.message || "Failed to process trade.");
+              showAlert("Transaction Error", err.message || "Failed to process trade.");
               setIsLoading(false);
             }
           }
         }
       ]
-    );
+    });
   };
 
   const handleRejectTrade = async () => {
     if (!trade) return;
     
-    Alert.alert(
-      "Decline Offer",
-      "Are you sure you want to decline this trade? The items will be returned to the sender.",
-      [
+    // Custom Alert Confirmation
+    setAlertConfig({
+      visible: true,
+      title: "Decline Offer",
+      message: "Are you sure you want to decline this trade? The items will be returned to the sender.",
+      buttons: [
         { text: "Cancel", style: "cancel" },
         {
           text: "Decline",
@@ -275,7 +300,6 @@ export default function ViewTradeScreen() {
                 } else {
                   await supabase.from('user_inventory').insert({
                     user_id: trade.creator_id,
-                    item_type: item.item_type,
                     [colName]: itemId,
                     quantity: item.quantity
                   });
@@ -293,17 +317,17 @@ export default function ViewTradeScreen() {
               });
 
               DeviceEventEmitter.emit('refreshShopFeed');
-              Alert.alert("Trade Declined", "The offer was rejected and items were returned to the sender.");
+              showAlert("Trade Declined", "The offer was rejected and items were returned to the sender.");
               handleClose();
 
             } catch (error: any) {
-              Alert.alert("Error declining trade", error.message);
+              showAlert("Error declining trade", error.message);
               setIsLoading(false);
             }
           }
         }
       ]
-    );
+    });
   };
 
   return (
@@ -431,6 +455,15 @@ export default function ViewTradeScreen() {
           )}
         </View>
       )}
+
+      {/* Custom Alert Component */}
+      <CustomAlert 
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttons={alertConfig.buttons}
+        onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+      />
     </View>
   );
 }

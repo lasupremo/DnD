@@ -1,21 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Alert, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, DeviceEventEmitter } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../lib/supabase';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import CustomAlert, { AlertButton } from '../../../components/CustomAlert';
 
 export default function CreateTradeScreen() {
   const router = useRouter();
   const { targetUserId, targetUsername } = useLocalSearchParams();
   const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // --- 🛒 THE TRADE CARTS ---
+  // --- THE TRADE CARTS ---
   const [offeredBits, setOfferedBits] = useState('');
   const [requestedBits, setRequestedBits] = useState('');
   const [offeredItems, setOfferedItems] = useState<any[]>([]);
   const [requestedItems, setRequestedItems] = useState<any[]>([]);
 
-  // --- 🔽 CASCADING DROPDOWN STATES ---
+  // --- CASCADING DROPDOWN STATES ---
   const [tradeSide, setTradeSide] = useState<'offering' | 'requesting'>('offering');
   const [selectedCategory, setSelectedCategory] = useState<'card' | 'video' | null>(null);
   
@@ -28,6 +29,15 @@ export default function CreateTradeScreen() {
   const [quantity, setQuantity] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Custom Alert State
+  const [alertConfig, setAlertConfig] = useState<{ visible: boolean, title: string, message: string, buttons?: AlertButton[] }>({
+    visible: false, title: '', message: ''
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setAlertConfig({ visible: true, title, message });
+  };
 
   useEffect(() => {
     fetchUser();
@@ -198,37 +208,37 @@ export default function CreateTradeScreen() {
 
   const handleSubmitTrade = async () => {
     if (!offeredBits && offeredItems.length === 0 && !requestedBits && requestedItems.length === 0) {
-      Alert.alert("Error", "You cannot post an entirely empty trade!");
+      showAlert("Error", "You cannot post an entirely empty trade!");
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      const { data: listingData, error: listingError } = await supabase
-        .from('market_listings')
-        .insert({
-          creator_id: currentUser.id,
-          target_user_id: targetUserId || null,
-          offered_bits: parseInt(offeredBits) || 0,
-          requested_bits: parseInt(requestedBits) || 0,
-          status: 'open'
-        })
-        .select()
-        .single();
+      const { data: listingData, error: listingError } = await supabase
+        .from('market_listings')
+        .insert({
+          creator_id: currentUser.id,
+          target_user_id: targetUserId || null,
+          offered_bits: parseInt(offeredBits) || 0,
+          requested_bits: parseInt(requestedBits) || 0,
+          status: 'open'
+        })
+        .select()
+        .single();
 
-      if (listingError) throw listingError;
+      if (listingError) throw listingError;
 
-      if (targetUserId) {
-        await supabase.from('notifications').insert({
-          user_id: targetUserId as string,
-          type: 'trade_received',
-          message: `@${currentUser.username} sent you a Direct Trade offer!`,
-          reference_id: listingData.id
-        });
-      }
+      if (targetUserId) {
+        await supabase.from('notifications').insert({
+          user_id: targetUserId as string,
+          type: 'trade_received',
+          message: `@${currentUser.username} sent you a Direct Trade offer!`,
+          reference_id: listingData.id
+        });
+      }
 
-      const listingId = listingData.id;
+      const listingId = listingData.id;
       const allItemsToInsert: any[] = [];
 
       offeredItems.forEach(item => {
@@ -289,10 +299,11 @@ export default function CreateTradeScreen() {
         }
       }
 
-      Alert.alert("Success!", "Your trade has been posted and your items are securely in escrow.");
+      // Custom Alert Success
+      showAlert("Success!", "Your trade has been posted and your items are securely in escrow.");
       router.back();
     } catch (error: any) {
-      Alert.alert("Error posting trade", error.message);
+      showAlert("Error posting trade", error.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -506,6 +517,15 @@ export default function CreateTradeScreen() {
           <Text style={styles.submitTradeText}>POST TRADE</Text>
         )}
       </TouchableOpacity>
+
+      {/* Custom Alert Component */}
+      <CustomAlert 
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttons={alertConfig.buttons}
+        onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+      />
     </ScrollView>
   );
 }

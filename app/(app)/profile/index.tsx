@@ -8,14 +8,13 @@ import {
   Image,
   TextInput,
   ActivityIndicator,
-  Alert,
   DeviceEventEmitter
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../lib/supabase';
 import { useRouter } from 'expo-router';
-// 🟢 NEW: Import Swipeable from Gesture Handler
-import { Swipeable } from 'react-native-gesture-handler'; 
+import Swipeable from 'react-native-gesture-handler/Swipeable'; 
+import CustomAlert, { AlertButton } from '../../../components/CustomAlert';
 
 type SocialTab = 'FRIENDS' | 'ADD_FRIEND';
 
@@ -34,11 +33,18 @@ export default function ProfileScreen() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const [alertConfig, setAlertConfig] = useState<{ visible: boolean, title: string, message: string, buttons?: AlertButton[] }>({
+    visible: false, title: '', message: ''
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setAlertConfig({ visible: true, title, message });
+  };
+
   useEffect(() => {
     fetchUserData();
   }, []);
 
-  // 🟢 NEW: Instantly refresh the Profile UI when settings are saved!
   useEffect(() => {
     const subscription = DeviceEventEmitter.addListener('profileUpdated', () => {
       fetchUserData(); 
@@ -49,12 +55,10 @@ export default function ProfileScreen() {
     };
   }, []);
 
-  // Real-Time Listener for Friendships
   useEffect(() => {
     if (!currentUser?.id) return;
 
     const friendshipChannel = supabase
-      // 🟢 FIXED: Appending Date.now() ensures a unique channel connection every render
       .channel(`custom-friendship-channel-${Date.now()}`)
       .on(
         'postgres_changes',
@@ -86,7 +90,7 @@ export default function ProfileScreen() {
       setCurrentUser(profile);
       fetchSocialData(user.id);
     } catch (error: any) {
-      Alert.alert('Error loading profile', error.message);
+      showAlert('Error loading profile', error.message);
     } finally {
       setIsLoading(false);
     }
@@ -143,7 +147,7 @@ export default function ProfileScreen() {
 
       if (currentUser?.id) fetchSocialData(currentUser.id);
     } catch (error: any) {
-      Alert.alert("Error accepting request", error.message);
+      showAlert("Error accepting request", error.message);
     }
   };
 
@@ -161,23 +165,22 @@ export default function ProfileScreen() {
 
       if (currentUser?.id) fetchSocialData(currentUser.id);
     } catch (error: any) {
-      Alert.alert("Error rejecting request", error.message);
+      showAlert("Error rejecting request", error.message);
     }
   };
 
-  // 🟢 NEW: Delete friendship regardless of who sent the original request
   const handleUnfriend = async (friendId: string, friendUsername: string) => {
-    Alert.alert(
-      "Unfriend",
-      `Are you sure you want to remove @${friendUsername} from your friends list?`,
-      [
+    setAlertConfig({
+      visible: true,
+      title: "Unfriend",
+      message: `Are you sure you want to remove @${friendUsername} from your friends list?`,
+      buttons: [
         { text: "Cancel", style: "cancel" },
         { 
           text: "Unfriend", 
           style: "destructive", 
           onPress: async () => {
             try {
-              // This OR query checks both combinations to find the correct friendship row
               const { error } = await supabase
                 .from('friendships')
                 .delete()
@@ -185,18 +188,16 @@ export default function ProfileScreen() {
 
               if (error) throw error;
 
-              // Refresh the list!
               if (currentUser?.id) fetchSocialData(currentUser.id);
             } catch (error: any) {
-              Alert.alert("Error unfriending", error.message);
+              showAlert("Error unfriending", error.message);
             }
           }
         }
       ]
-    );
+    });
   };
 
-  // 🟢 NEW: The red background and trash icon that reveals on swipe
   const renderHiddenUnfriendButton = (friendId: string, friendUsername: string) => {
     return (
       <TouchableOpacity 
@@ -220,7 +221,7 @@ export default function ProfileScreen() {
 
     try {
       if (cleanQuery.toLowerCase() === currentUser?.username?.toLowerCase()) {
-        Alert.alert("Oops", "You cannot add yourself!");
+        showAlert("Oops", "You cannot add yourself!");
         setIsSearching(false);
         return;
       }
@@ -233,7 +234,7 @@ export default function ProfileScreen() {
 
       if (error) {
         if (error.code === 'PGRST116') {
-          Alert.alert("Not Found", "No player found with that exact username.");
+          showAlert("Not Found", "No player found with that exact username.");
         } else {
           throw error;
         }
@@ -241,7 +242,7 @@ export default function ProfileScreen() {
         setSearchedUser(data);
       }
     } catch (error: any) {
-      Alert.alert("Search Error", error.message);
+      showAlert("Search Error", error.message);
     } finally {
       setIsSearching(false);
     }
@@ -263,7 +264,7 @@ export default function ProfileScreen() {
 
       if (error) {
         if (error.code === '23505') {
-          Alert.alert("Notice", "A friend request already exists between you two.");
+          showAlert("Notice", "A friend request already exists between you two.");
         } else {
           throw error;
         }
@@ -278,7 +279,7 @@ export default function ProfileScreen() {
         setRequestStatus("Request Sent!");
       }
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      showAlert("Error", error.message);
     }
   };
 
@@ -351,7 +352,6 @@ export default function ProfileScreen() {
               <Text style={styles.helperText}>Your friends list is empty.</Text>
             ) : (
               friendsList.map((friend) => (
-                // 🟢 FIXED: Wrapped the friend card in a Swipeable component and moved key here
                 <Swipeable 
                   key={friend.id} 
                   renderRightActions={() => renderHiddenUnfriendButton(friend.id, friend.username)}
@@ -423,6 +423,14 @@ export default function ProfileScreen() {
           </View>
         )}
       </ScrollView>
+
+      <CustomAlert 
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttons={alertConfig.buttons}
+        onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+      />
     </View>
   );
 }
@@ -457,7 +465,6 @@ const styles = StyleSheet.create({
   searchExecuteText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
   helperText: { color: '#666', fontSize: 12, textAlign: 'center', marginTop: 16, paddingHorizontal: 20 },
   
-  // 🟢 NEW: Swipe-to-delete styles
   hiddenDeleteBtn: {
     backgroundColor: '#FF4A58',
     justifyContent: 'center',
@@ -465,7 +472,7 @@ const styles = StyleSheet.create({
     width: 80,
     borderTopRightRadius: 12,
     borderBottomRightRadius: 12,
-    marginBottom: 12, // Matches friendCard bottom margin
+    marginBottom: 12,
     height: 'auto'
   },
   hiddenDeleteText: {
