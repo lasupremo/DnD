@@ -71,16 +71,41 @@ export default function ShopScreen() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data: userData } = await supabase.from('users').select('balance').eq('id', user.id).single();
+    // 🟢 1. Fetch balance AND user_groups
+    const { data: userData } = await supabase
+      .from('users')
+      .select('balance, user_groups')
+      .eq('id', user.id)
+      .single();
+      
     if (userData) setBalance(userData.balance || 0);
+    
+    // Safely default to an empty array if the user has no special groups
+    const userGroups = userData?.user_groups || [];
+    const hasAllAccess = userGroups.includes('all_access'); // Your "Master Key" group
 
+    // 2. Fetch all active packs and unlocked history
     const { data: allPacks, error } = await supabase.from('collection').select('*').eq('is_active', true).order('created_at', { ascending: false });
     const { data: unlocked } = await supabase.from('user_unlocked_packs').select('collection_id').eq('user_id', user.id);
     
     const unlockedIds = unlocked?.map(u => u.collection_id) || [];
 
     if (allPacks && !error) {
-      const processedPacks = allPacks.map(pack => ({
+      
+      // 🟢 3. Filter the packs based on permissions
+      const accessiblePacks = allPacks.filter(pack => {
+        // If they have the master key, show everything
+        if (hasAllAccess) return true;
+        
+        // If the pack has no required group, show it to everyone
+        if (!pack.required_group) return true;
+        
+        // Otherwise, only show it if the user's array includes the required group
+        return userGroups.includes(pack.required_group);
+      });
+
+      // 4. Map the remaining packs for the UI
+      const processedPacks = accessiblePacks.map(pack => ({
         ...pack,
         isUnlocked: unlockedIds.includes(pack.id)
       }));
